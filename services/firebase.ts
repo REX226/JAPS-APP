@@ -20,16 +20,15 @@ const firebaseConfig = {
 
 // -----------------------------------------------------------
 // 🔑 VAPID KEY (Web Push Certificate)
-// Go to Firebase Console -> Project Settings -> Cloud Messaging -> Web Config -> Generate Key Pair
 // -----------------------------------------------------------
 const VAPID_KEY = "BD7XDu-yQd39uk_PPx1Xs_djDjWlQ1g3eTVAwohs4Ga4Jryk8FQ16Jhj2mLvL4P2KMpFNtLUdhwIk0yBzVxmCd8"; 
 
-const isConfigured = firebaseConfig.apiKey !== "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU";
+const isConfigured = firebaseConfig.apiKey !== "PASTE_YOUR_API_KEY_HERE";
 
 if (!isConfigured) {
-    // Console log disabled to keep clean
-} else {
     console.warn("⚠️ Firebase is NOT configured. Push notifications will not work.");
+} else {
+    console.log("✅ Firebase Configured");
 }
 
 const app = isConfigured ? initializeApp(firebaseConfig) : null;
@@ -38,7 +37,8 @@ const messaging = app ? getMessaging(app) : null;
 
 // --- EXPORTS ---
 export const checkFirebaseConfig = () => {
-    return isConfigured && VAPID_KEY !== "BD7XDu-yQd39uk_PPx1Xs_djDjWlQ1g3eTVAwohs4Ga4Jryk8FQ16Jhj2mLvL4P2KMpFNtLUdhwIk0yBzVxmCd8";
+    // Returns true only if BOTH the standard config AND the VAPID key are set
+    return isConfigured && VAPID_KEY.length > 50;
 };
 
 export const initializePushNotifications = async () => {
