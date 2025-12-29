@@ -1,10 +1,11 @@
 
 // Service Worker for handling background notifications
-importScripts('https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/9.0.0/firebase-messaging-compat.js');
+// Using compat libraries for broader support
+importScripts('https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js');
 
 // -----------------------------------------------------------
-// 🔧 CONFIGURATION REQUIRED
+// 🔧 CONFIGURATION REQUIRED (MUST MATCH src/services/firebase.ts)
 // -----------------------------------------------------------
 const firebaseConfig = {
   apiKey: "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU",
@@ -17,59 +18,62 @@ const firebaseConfig = {
   measurementId: "G-18MNV84E8X"
 };
 
-if (firebaseConfig.apiKey !== "PASTE_YOUR_API_KEY_HERE") {
-  firebase.initializeApp(firebaseConfig);
-  const messaging = firebase.messaging();
+// Force immediate activation
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', () => self.clients.claim());
 
-  // Background Message Handler
-  messaging.onBackgroundMessage(function(payload) {
-    console.log('[SW] Received background message ', payload);
-    
-    const title = payload.notification?.title || '🚨 SENTINEL ALERT';
-    const body = payload.notification?.body || 'Emergency Broadcast Received';
-    const timestamp = Date.now();
-    
-    // 🔊 AGGRESSIVE VIBRATION PATTERN
-    // 3 seconds of pattern, then pause, repeat
-    const vibrationPattern = [
-        500, 200, 500, 200, 500, 200, // SOS-like
-        1000, 500, 1000 // Long buzzes
-    ];
+if (firebaseConfig.apiKey !== "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU") {
+  try {
+    firebase.initializeApp(firebaseConfig);
+    const messaging = firebase.messaging();
 
-    const notificationOptions = {
-      body: body,
-      icon: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
-      badge: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
-      // CRITICAL CHANGE: Unique tag per timestamp ensures the phone vibrates 
-      // for every single alert, instead of silently updating the old one.
-      tag: 'sentinel-alert-' + timestamp, 
-      renotify: true,           
-      requireInteraction: true, // Notification stays on screen until clicked
-      silent: false,            
-      vibrate: vibrationPattern,
-      data: {
-        url: self.location.origin,
-        timestamp: timestamp
-      }
-    };
+    // Background Message Handler
+    messaging.onBackgroundMessage(function(payload) {
+      console.log('[SW] Received background message ', payload);
+      
+      const title = payload.notification?.title || '🚨 SENTINEL ALERT';
+      const body = payload.notification?.body || 'Emergency Broadcast Received';
+      const timestamp = Date.now();
+      
+      // 🔊 AGGRESSIVE VIBRATION PATTERN
+      const vibrationPattern = [
+          500, 200, 500, 200, 500, 200, // SOS
+          1000, 500, 1000, 500, 1000 // Long buzzes
+      ];
 
-    return self.registration.showNotification(title, notificationOptions);
-  });
+      const notificationOptions = {
+        body: body,
+        icon: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
+        badge: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
+        tag: 'sentinel-alert-' + timestamp, // Unique tag forces new alert
+        renotify: true,           
+        requireInteraction: true, 
+        silent: false,            
+        vibrate: vibrationPattern,
+        data: {
+          url: self.location.origin,
+          timestamp: timestamp
+        }
+      };
+
+      return self.registration.showNotification(title, notificationOptions);
+    });
+  } catch(e) {
+    console.error("Firebase SW Init Error", e);
+  }
 }
 
-// Click Handler: Open the app
+// Click Handler
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
-      // If app is open, focus it
       for (var i = 0; i < clientList.length; i++) {
         var client = clientList[i];
         if (client.url.includes('/') && 'focus' in client) {
           return client.focus();
         }
       }
-      // If not, open new window
       if (clients.openWindow) {
         return clients.openWindow('./');
       }

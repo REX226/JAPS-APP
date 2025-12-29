@@ -6,11 +6,6 @@ import { getMessaging, getToken } from "firebase/messaging";
 // -----------------------------------------------------------
 // ✅ ACTIVE CONFIGURATION FILE
 // -----------------------------------------------------------
-// 🔧 INSTRUCTIONS
-// 1. Go to Firebase Console -> Project Settings
-// 2. Scroll down to "SDK Setup and Configuration"
-// 3. Copy the 'firebaseConfig' object keys and paste below.
-// -----------------------------------------------------------
 
 const firebaseConfig = {
   apiKey: "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU",
@@ -23,8 +18,13 @@ const firebaseConfig = {
   measurementId: "G-18MNV84E8X"
 };
 
-// Check if configured
-const isConfigured = firebaseConfig.apiKey !== "PASTE_YOUR_API_KEY_HERE";
+// -----------------------------------------------------------
+// 🔑 VAPID KEY (Web Push Certificate)
+// Go to Firebase Console -> Project Settings -> Cloud Messaging -> Web Config -> Generate Key Pair
+// -----------------------------------------------------------
+const VAPID_KEY = "BD7XDu-yQd39uk_PPx1Xs_djDjWlQ1g3eTVAwohs4Ga4Jryk8FQ16Jhj2mLvL4P2KMpFNtLUdhwIk0yBzVxmCd8"; 
+
+const isConfigured = firebaseConfig.apiKey !== "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU";
 
 if (!isConfigured) {
     // Console log disabled to keep clean
@@ -38,7 +38,7 @@ const messaging = app ? getMessaging(app) : null;
 
 // --- EXPORTS ---
 export const checkFirebaseConfig = () => {
-    return isConfigured;
+    return isConfigured && VAPID_KEY !== "BD7XDu-yQd39uk_PPx1Xs_djDjWlQ1g3eTVAwohs4Ga4Jryk8FQ16Jhj2mLvL4P2KMpFNtLUdhwIk0yBzVxmCd8";
 };
 
 export const initializePushNotifications = async () => {
@@ -51,9 +51,9 @@ export const initializePushNotifications = async () => {
         return false;
     }
 
-    // Get FCM Token
+    // Get FCM Token with VAPID Key
     const token = await getToken(messaging, { 
-      // If you have a VAPID key, add it here: vapidKey: "..."
+      vapidKey: VAPID_KEY
     });
 
     if (token) {
