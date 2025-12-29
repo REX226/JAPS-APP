@@ -52,8 +52,8 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     if (isCloudEnabled()) {
         const status = await getMonitorStatus();
         if (status) {
-            // Consider online if seen in last 15 seconds
-            const isAlive = (Date.now() - status.last_seen) < 15000 && status.online;
+            // Consider online if seen in last 10 seconds (allow some buffer for network latency)
+            const isAlive = (Date.now() - status.last_seen) < 10000 && status.online;
             setMonitorStatus(isAlive ? 'online' : 'offline');
         } else {
             setMonitorStatus('offline');
@@ -65,7 +65,8 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
 
   useEffect(() => {
     refreshData();
-    const interval = setInterval(refreshData, 5000); 
+    // ✅ REDUCED TO 2 SECONDS
+    const interval = setInterval(refreshData, 2000); 
     return () => clearInterval(interval);
   }, [refreshData]);
 
@@ -148,6 +149,10 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   };
   
   const handleSaveSettings = () => {
+    if (dbUrl && !dbUrl.startsWith('https://')) {
+        alert("URL must start with https://");
+        return;
+    }
     setBackendUrl(dbUrl);
     refreshData();
     alert("Database connection updated.");
@@ -161,15 +166,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
-  const getNextOccurrence = (timeStr: string) => {
-    const now = new Date();
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const trigger = new Date(now);
-    trigger.setHours(hours, minutes, 0, 0);
-    if (trigger.getTime() <= now.getTime()) trigger.setDate(trigger.getDate() + 1);
-    const isToday = trigger.getDate() === now.getDate();
-    return `${isToday ? 'Today' : 'Tomorrow'} at ${trigger.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}`;
-  };
+  // Validation helper
+  const isUrlSuspicious = dbUrl && !dbUrl.includes('.firebaseio.com') && !dbUrl.includes('.firebasedatabase.app');
+  const isUrlTypo = dbUrl && (dbUrl.endsWith('.co') || dbUrl.endsWith('.c'));
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col md:flex-row">
@@ -191,7 +190,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                )}
 
                {isCloud && (
-                   <div className={`flex items-center gap-2 text-xs font-bold ${
+                   <div 
+                      onClick={() => setActiveTab('settings')}
+                      className={`flex items-center gap-2 text-xs font-bold cursor-pointer hover:opacity-80 transition-opacity ${
                        monitorStatus === 'online' ? 'text-green-400' : 
                        monitorStatus === 'checking' ? 'text-yellow-400' : 'text-red-500'
                    }`}>
@@ -203,9 +204,10 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                    </div>
                )}
                {isCloud && monitorStatus === 'offline' && (
-                   <p className="text-[10px] text-red-400 leading-tight mt-1">
-                       Run 'npm run monitor' on PC.
-                   </p>
+                   <div className="text-[10px] text-red-400 leading-tight mt-1 border-t border-slate-700 pt-1">
+                       <i className="fas fa-arrow-up mr-1"></i>
+                       Click above to fix connection
+                   </div>
                )}
            </div>
         </div>
@@ -327,39 +329,68 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 <div className="bg-slate-800 p-8 rounded-lg shadow-xl border border-slate-700">
                     <h3 className="text-lg font-bold text-white mb-4">1. Database Connection</h3>
                     <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Firebase Database URL</label>
-                    <input type="text" placeholder="https://your-project.firebaseio.com" value={dbUrl} onChange={(e) => setDbUrl(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none" />
+                        <label className="block text-sm font-medium text-slate-300 mb-2">Firebase Database URL</label>
+                        <input 
+                            type="text" 
+                            placeholder="https://your-project.firebaseio.com" 
+                            value={dbUrl} 
+                            onChange={(e) => setDbUrl(e.target.value.trim())} 
+                            className={`w-full bg-slate-900 border rounded p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none ${isUrlTypo || isUrlSuspicious ? 'border-red-500' : 'border-slate-700'}`} 
+                        />
+                        {isUrlTypo && (
+                             <p className="text-red-400 text-xs mt-2 animate-pulse font-bold">
+                                ⚠️ It looks like there is a typo in your URL (ending in .co). It usually ends in <code>.com</code>.
+                            </p>
+                        )}
+                        {!isUrlTypo && isUrlSuspicious && (
+                            <p className="text-yellow-400 text-xs mt-2">
+                                ⚠️ Standard Firebase URLs usually end in <code>.firebaseio.com</code> or <code>.firebasedatabase.app</code>.
+                            </p>
+                        )}
                     </div>
                     <div className="flex justify-between items-center pt-4">
-                    <div className="flex items-center gap-2">
-                        <div className={`w-3 h-3 rounded-full ${isCloud ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                        <span className="text-sm font-medium">{isCloud ? 'Cloud Connected' : 'Local Mode'}</span>
-                    </div>
-                    <Button onClick={handleSaveSettings}>Save & Connect</Button>
+                        <div className="flex items-center gap-2">
+                            <div className={`w-3 h-3 rounded-full ${isCloud ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                            <span className="text-sm font-medium">{isCloud ? 'Cloud Connected' : 'Local Mode'}</span>
+                        </div>
+                        <Button onClick={handleSaveSettings}>Save & Connect</Button>
                     </div>
                 </div>
 
                 {/* 2. SERVER MONITOR KEYS */}
                 <div className="bg-slate-800 p-8 rounded-lg shadow-xl border border-slate-700">
-                    <h3 className="text-lg font-bold text-white mb-4">2. Server Keys (Secret Generation)</h3>
-                    <p className="text-sm text-slate-400 mb-4">
-                        To enable the "Monitor" script (which sends Push Notifications to closed apps), you need a Service Account Key file.
-                    </p>
+                    <h3 className="text-lg font-bold text-white mb-4">2. Server Monitor</h3>
                     
-                    <div className="bg-slate-900 p-4 rounded border border-slate-600 text-sm space-y-2 font-mono text-slate-300">
-                        <p className="text-blue-400 font-bold">// HOW TO GENERATE KEY:</p>
-                        <p>1. Go to Firebase Console &rarr; Project Settings.</p>
-                        <p>2. Tab: <strong>Service Accounts</strong>.</p>
-                        <p>3. Click <strong>Generate New Private Key</strong>.</p>
-                        <p>4. Save the file as <span className="text-yellow-400">service-account.json</span> in your project root.</p>
-                        <p>5. Run <span className="text-green-400">npm run monitor</span>.</p>
-                    </div>
+                    <div className="mt-4 border-t border-slate-700 pt-4">
+                        <h4 className="font-bold text-slate-300 mb-2">Debug Monitor Connection</h4>
+                        
+                        <div className={`p-4 rounded border text-sm space-y-2 ${monitorStatus === 'offline' ? 'bg-red-900/20 border-red-500' : 'bg-slate-900 border-slate-600'}`}>
+                             <div className="flex items-center justify-between mb-2">
+                                <span className="text-slate-400">Current Status:</span>
+                                <span className={`font-bold ${monitorStatus === 'online' ? 'text-green-400' : 'text-red-500'}`}>{monitorStatus === 'online' ? 'ONLINE' : 'OFFLINE'}</span>
+                            </div>
+                            
+                            {monitorStatus === 'offline' && (
+                              <div className="text-red-300 text-xs mb-3 font-bold">
+                                <i className="fas fa-exclamation-circle mr-1"></i>
+                                Action Required: The URL in this dashboard must match the URL used by the monitor script.
+                              </div>
+                            )}
+                            
+                            <p className="text-slate-400 mb-2">
+                                To fix OFFLINE, open <code>monitor-local.js</code> and change <strong>MANUAL_DB_URL</strong> to:
+                            </p>
+                            
+                            <div className="flex gap-2">
+                                <code className="block bg-black p-2 rounded text-green-400 flex-1 overflow-x-auto whitespace-nowrap font-mono select-all">
+                                    {dbUrl || 'No Database URL Set'}
+                                </code>
+                            </div>
+                        </div>
 
-                    <div className="mt-6 border-t border-slate-700 pt-4">
-                        <h4 className="font-bold text-slate-300 mb-2">Monitor Status Check</h4>
-                        <div className="flex items-center justify-between bg-slate-900/50 p-3 rounded">
-                            <span className="text-sm">Current Status:</span>
-                            <span className={`text-sm font-bold ${monitorStatus === 'online' ? 'text-green-400' : monitorStatus === 'checking' ? 'text-yellow-400' : 'text-red-500'}`}>{monitorStatus === 'online' ? 'ONLINE' : monitorStatus === 'checking' ? 'CHECKING...' : 'OFFLINE'}</span>
+                        <div className="mt-4 text-xs text-slate-500">
+                           <p>Running the monitor script:</p>
+                           <code className="block bg-slate-950 p-2 mt-1 rounded text-slate-300">npm run monitor</code>
                         </div>
                     </div>
                 </div>

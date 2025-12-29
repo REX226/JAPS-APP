@@ -87,7 +87,8 @@ function startHeartbeat() {
     };
 
     updateStatus();
-    setInterval(updateStatus, 5000);
+    // ✅ REDUCED TO 2 SECONDS
+    setInterval(updateStatus, 2000);
 
     const onExit = () => {
         console.log("\n🛑 Stopping Monitor...");
@@ -136,6 +137,7 @@ function startRecurringScheduler() {
         recurringRules = val ? (Array.isArray(val) ? val : Object.values(val)) : [];
     });
 
+    // ✅ REDUCED TO 2 SECONDS (Checks if minute changed more frequently)
     setInterval(() => {
         const now = new Date();
         const currentMinute = now.getMinutes();
@@ -156,7 +158,7 @@ function startRecurringScheduler() {
             }
         });
         lastMinuteChecked = currentMinute;
-    }, 10000);
+    }, 2000);
 }
 
 // --- 6. NOTIFICATION SENDER (HIGH PRIORITY) ---
