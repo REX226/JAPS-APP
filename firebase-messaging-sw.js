@@ -4,7 +4,7 @@ importScripts('https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js')
 importScripts('https://www.gstatic.com/firebasejs/9.0.0/firebase-messaging-compat.js');
 
 // -----------------------------------------------------------
-// 🔧 CONFIGURATION REQUIRED (MUST MATCH services/firebase.ts)
+// 🔧 CONFIGURATION REQUIRED
 // -----------------------------------------------------------
 const firebaseConfig = {
   apiKey: "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU",
@@ -27,30 +27,29 @@ if (firebaseConfig.apiKey !== "PASTE_YOUR_API_KEY_HERE") {
     
     const title = payload.notification?.title || '🚨 SENTINEL ALERT';
     const body = payload.notification?.body || 'Emergency Broadcast Received';
+    const timestamp = Date.now();
     
-    // 🔊 AGGRESSIVE VIBRATION PATTERN (SOS + Long Buzz)
-    // The browser will vibrate the phone even if the screen is off (on supported Androids)
+    // 🔊 AGGRESSIVE VIBRATION PATTERN
+    // 3 seconds of pattern, then pause, repeat
     const vibrationPattern = [
-        // SOS
-        200, 100, 200, 100, 200, 100, 
-        500, 100, 500, 100, 500, 100, 
-        200, 100, 200, 100, 200, 500,
-        // LONG BUZZ
-        1000, 200, 1000, 200, 1000
+        500, 200, 500, 200, 500, 200, // SOS-like
+        1000, 500, 1000 // Long buzzes
     ];
 
     const notificationOptions = {
       body: body,
       icon: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
       badge: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
-      tag: 'sentinel-alert',
-      renotify: true,           // Vibrate again even if old notification is still there
-      requireInteraction: true, // Wait for user to dismiss
-      silent: false,            // Play default system notification sound
+      // CRITICAL CHANGE: Unique tag per timestamp ensures the phone vibrates 
+      // for every single alert, instead of silently updating the old one.
+      tag: 'sentinel-alert-' + timestamp, 
+      renotify: true,           
+      requireInteraction: true, // Notification stays on screen until clicked
+      silent: false,            
       vibrate: vibrationPattern,
       data: {
         url: self.location.origin,
-        timestamp: Date.now()
+        timestamp: timestamp
       }
     };
 
