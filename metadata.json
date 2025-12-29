@@ -1,0 +1,7 @@
+{
+  "name": "Sentinel Alert System",
+  "description": "A real-time emergency broadcast system allowing admins to schedule automated alerts and users to receive them with audible siren notifications.",
+  "requestFramePermissions": [
+    "screen-wake-lock"
+  ]
+}
