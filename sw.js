@@ -1,5 +1,5 @@
 
-const CACHE_NAME = 'sentinel-v7'; // Version bumped to force update
+const CACHE_NAME = 'sentinel-v8'; // Version bumped to v8
 const urlsToCache = [
   './',
   './index.html',
