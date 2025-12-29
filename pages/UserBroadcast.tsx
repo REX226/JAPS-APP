@@ -18,7 +18,7 @@ export const UserBroadcast: React.FC = () => {
   
   // Install State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [showInstallModal, setShowInstallModal] = useState(false);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
 
   // Status State
@@ -46,6 +46,11 @@ export const UserBroadcast: React.FC = () => {
     // Check install status
     if (window.matchMedia('(display-mode: standalone)').matches) {
         setIsAppInstalled(true);
+    }
+    
+    // Request permission immediately on load if possible
+    if ("Notification" in window && Notification.permission !== "granted") {
+        Notification.requestPermission();
     }
   }, []);
 
@@ -144,8 +149,6 @@ export const UserBroadcast: React.FC = () => {
             osc.start();
             osc.stop(ctx.currentTime + 0.1);
         } catch (e) { console.error(e); }
-
-        if (deferredPrompt && !isAppInstalled) setShowInstallModal(true);
     }
   };
 
@@ -161,7 +164,6 @@ export const UserBroadcast: React.FC = () => {
     if (silentAudioRef.current) silentAudioRef.current.pause();
   };
 
-  // ... (Vibration and Siren Logic remains same) ...
   const stopVibration = () => {
     if (vibrationIntervalRef.current) {
       clearInterval(vibrationIntervalRef.current);
@@ -175,11 +177,12 @@ export const UserBroadcast: React.FC = () => {
     setTimeout(() => { setIsAlarmActive(false); stopVibration(); }, 15000);
 
     if (navigator.vibrate) {
-        navigator.vibrate([500, 200, 500, 200, 1000]);
+        // SOS Pattern
+        navigator.vibrate([200, 100, 200, 100, 200, 100, 500, 100, 500, 100, 500, 100]);
         if (vibrationIntervalRef.current) clearInterval(vibrationIntervalRef.current);
         vibrationIntervalRef.current = setInterval(() => {
-            navigator.vibrate([500, 200, 500]);
-        }, 2000);
+             navigator.vibrate([200, 100, 200, 100, 200, 100, 500, 100, 500, 100, 500, 100]);
+        }, 3000);
     }
 
     if (!audioEnabled || !audioCtxRef.current) return;
@@ -215,7 +218,10 @@ export const UserBroadcast: React.FC = () => {
 
     if (lastAlertCount !== null && currentAlerts.length > lastAlertCount) {
       playSiren();
-      if (currentAlerts.length > 0) showSystemNotification(currentAlerts[0]);
+      // Only show system notification if app is hidden (to avoid double notify)
+      if (document.visibilityState === 'hidden') {
+         if (currentAlerts.length > 0) showSystemNotification(currentAlerts[0]);
+      }
     }
     setLastAlertCount(currentAlerts.length);
   }, [lastAlertCount, playSiren]);
@@ -246,7 +252,6 @@ export const UserBroadcast: React.FC = () => {
   }, []);
 
   const showSystemNotification = (alert: AlertMessage) => {
-      // ... (Same as previous impl)
       if (!("Notification" in window) || Notification.permission !== "granted") return;
       try {
          if (navigator.serviceWorker && navigator.serviceWorker.controller) {
@@ -257,20 +262,22 @@ export const UserBroadcast: React.FC = () => {
                     tag: 'sentinel-alert',
                     renotify: true,
                     requireInteraction: true,
-                    vibrate: [500, 200, 500]
+                    vibrate: [500, 200, 500, 200, 1000]
                 } as any);
             });
-         } else {
-             new Notification(`🚨 ${alert.severity}`, { body: alert.content });
          }
       } catch(e) {}
   };
 
   // --- INSTALL UI ---
   useEffect(() => {
-    const handler = (e: any) => { e.preventDefault(); setDeferredPrompt(e); };
+    const handler = (e: any) => { 
+        e.preventDefault(); 
+        setDeferredPrompt(e); 
+        setShowInstallBanner(true);
+    };
     window.addEventListener('beforeinstallprompt', handler);
-    window.addEventListener('appinstalled', () => { setIsAppInstalled(true); setShowInstallModal(false); });
+    window.addEventListener('appinstalled', () => { setIsAppInstalled(true); setShowInstallBanner(false); });
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
@@ -278,7 +285,7 @@ export const UserBroadcast: React.FC = () => {
     if (deferredPrompt) {
       deferredPrompt.prompt();
       deferredPrompt.userChoice.then((res: any) => {
-        if (res.outcome === 'accepted') setShowInstallModal(false);
+        if (res.outcome === 'accepted') setShowInstallBanner(false);
         setDeferredPrompt(null);
       });
     }
@@ -322,12 +329,6 @@ export const UserBroadcast: React.FC = () => {
           </div>
           
           <div className="flex gap-2 items-center">
-            {deferredPrompt && !isAppInstalled && (
-              <Button onClick={() => setShowInstallModal(true)} variant="secondary" className="text-xs px-2">
-                <i className="fas fa-download"></i>
-              </Button>
-            )}
-
             {!audioEnabled ? (
               <Button onClick={() => enableAudio(false)} variant="danger" className="animate-bounce font-bold shadow-lg shadow-red-900/50">
                 ACTIVATE SYSTEM
@@ -346,23 +347,29 @@ export const UserBroadcast: React.FC = () => {
         </div>
       </header>
 
-      {/* INSTALL MODAL */}
-      {showInstallModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="bg-slate-800 border border-slate-600 p-6 rounded-lg max-w-sm w-full shadow-2xl">
-                <div className="text-center mb-4">
-                    <i className="fas fa-download text-4xl text-blue-500 mb-2"></i>
-                    <h2 className="text-xl font-bold font-oswald">Install App</h2>
-                    <p className="text-slate-400 text-sm mt-2">Required for reliable background alerts.</p>
+      {/* INSTALL BANNER (Bottom Fixed) */}
+      {showInstallBanner && !isAppInstalled && (
+        <div className="fixed bottom-0 left-0 right-0 z-[100] bg-slate-800 border-t border-slate-600 p-4 shadow-2xl animate-pulse">
+            <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                    <div className="bg-slate-700 p-2 rounded">
+                        <i className="fas fa-download text-blue-400"></i>
+                    </div>
+                    <div>
+                        <p className="font-bold text-sm text-white">Install App</p>
+                        <p className="text-xs text-slate-400">Install Sentinel for reliable background alerts.</p>
+                    </div>
                 </div>
-                <Button onClick={handleInstallClick} fullWidth className="bg-blue-600 mb-2">Install Now</Button>
-                <button onClick={() => setShowInstallModal(false)} className="text-slate-500 text-xs underline w-full text-center">Not now</button>
+                <div className="flex gap-2">
+                    <button onClick={() => setShowInstallBanner(false)} className="px-3 py-1 text-xs text-slate-400 font-medium">Dismiss</button>
+                    <Button onClick={handleInstallClick} className="text-xs px-4 py-1">Install</Button>
+                </div>
             </div>
         </div>
       )}
 
       {/* MAIN CONTENT */}
-      <main className="flex-1 max-w-4xl mx-auto w-full p-4 md:p-8">
+      <main className="flex-1 max-w-4xl mx-auto w-full p-4 md:p-8 mb-16">
         {alerts.length === 0 ? (
            <div className="flex flex-col items-center justify-center h-64 text-slate-500">
              <i className="fas fa-shield-alt text-6xl mb-4 opacity-20"></i>

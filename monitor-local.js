@@ -163,6 +163,7 @@ async function sendNotifications(alertData) {
 
     console.log(`🚀 Sending Push to ${tokens.length} devices...`);
 
+    // HIGH PRIORITY PAYLOAD TO WAKE UP SCREEN
     const payload = {
         notification: {
             title: `🚨 ${alertData.severity} ALERT`,
@@ -172,30 +173,34 @@ async function sendNotifications(alertData) {
             alertId: alertData.id,
             severity: alertData.severity,
             forceAlarm: "true",
-            url: "https://sentinel-alert.netlify.app/",
+            url: "https://sentinel-alert.netlify.app/", // Replace with your actual deployed URL if needed
             timestamp: Date.now().toString()
         },
+        // Android specific: High Priority to wake screen and show on lockscreen
         android: {
-            priority: "high",
-            ttl: 0,
+            priority: "high", 
+            ttl: 0, // Deliver immediately or fail
             notification: {
-                sound: "default",
-                priority: "max",
+                priority: "max", // Heads-up notification (popup)
                 channelId: "sentinel_channel_critical",
-                visibility: "public",
+                visibility: "public", // Show content on lock screen
                 defaultSound: true,
                 defaultVibrateTimings: true,
-                icon: "stock_ticker_update"
+                icon: "stock_ticker_update" // Uses default system icon if mapped
             }
         },
+        // Web Push: Standard headers
         webpush: {
-            headers: { Urgency: "high" },
+            headers: { 
+                Urgency: "high",
+                TTL: "0" 
+            },
             notification: {
                 silent: false,
-                requireInteraction: true,
-                renotify: true,
+                requireInteraction: true, // Notification stays until user clicks
+                renotify: true, // Vibrate/Sound even if previous notif exists
                 tag: "sentinel-alert",
-                vibrate: [500, 200, 500, 200, 1000]
+                vibrate: [500, 200, 500, 200, 1000, 500, 200, 500] // Long vibration pattern
             }
         }
     };

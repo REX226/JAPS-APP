@@ -17,7 +17,7 @@ const firebaseConfig = {
 };
 
 // Initialize only if we have a valid API Key (prevents errors during initial setup)
-const isConfigured = firebaseConfig.apiKey !== "PASTE_YOUR_API_KEY_HERE";
+const isConfigured = firebaseConfig.apiKey !== "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU";
 
 const app = isConfigured ? initializeApp(firebaseConfig) : null;
 const db = app ? getDatabase(app) : null;
