@@ -5,7 +5,7 @@ import { AlertMessage } from '../types';
 import { getActiveAlerts } from '../services/storage';
 import { AlertCard } from '../components/AlertCard';
 import { Button } from '../components/Button';
-import { isCloudEnabled } from '../services/config';
+import { isCloudEnabled, getBackendUrl } from '../services/config';
 import { initializePushNotifications, checkFirebaseConfig } from '../services/firebase';
 
 // Tiny silent MP3 to keep the audio channel open and background execution alive
@@ -33,6 +33,8 @@ export const UserBroadcast: React.FC = () => {
   // Config Status
   const [firebaseConfigured, setFirebaseConfigured] = useState(true);
   const [pushPermission, setPushPermission] = useState<string>('default');
+  const [showConfigHelp, setShowConfigHelp] = useState(false);
+  const [skipConfig, setSkipConfig] = useState(false); 
   
   // Refs
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -54,13 +56,20 @@ export const UserBroadcast: React.FC = () => {
     }
     
     // Check Config
-    setFirebaseConfigured(checkFirebaseConfig());
+    const isConf = checkFirebaseConfig();
+    setFirebaseConfigured(isConf);
+    if (!isConf) setShowConfigHelp(true); 
+
     if ("Notification" in window) {
         setPushPermission(Notification.permission);
     }
 
+    // Initialize cloud status
+    const backendUrl = getBackendUrl();
+    setIsCloud(!!backendUrl && backendUrl.length > 0);
+
     // Try to init push if cloud is active
-    if (isCloudEnabled() && checkFirebaseConfig()) {
+    if (isCloudEnabled() && isConf) {
         initializePushNotifications();
     }
   }, []);
@@ -84,23 +93,19 @@ export const UserBroadcast: React.FC = () => {
         console.log('✅ Screen Wake Lock acquired');
         
         lock.addEventListener('release', () => {
-          console.log('⚠️ Screen Wake Lock released');
           setWakeLock(null);
-          // Auto-reacquire if still armed and visible
           if (document.visibilityState === 'visible' && localStorage.getItem('sentinel_armed') === 'true') {
             requestWakeLock();
           }
         });
       } catch (err: any) {
-        console.error(`Wake Lock failed: ${err.name}, ${err.message}`);
         setWakeLockError(true);
       }
     } else {
-        setWakeLockError(true); // Feature not supported
+        setWakeLockError(true);
     }
   };
 
-  // Re-acquire wake lock on visibility change
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && audioEnabled) {
@@ -125,7 +130,7 @@ export const UserBroadcast: React.FC = () => {
       ctx.resume().catch(() => console.log("Auto-resume waiting for gesture"));
     }
 
-    // 2. Silent Loop (Background Keep-Alive)
+    // 2. Silent Loop
     if (silentAudioRef.current) {
         const playPromise = silentAudioRef.current.play();
         if (playPromise !== undefined) {
@@ -147,20 +152,22 @@ export const UserBroadcast: React.FC = () => {
     localStorage.setItem('sentinel_armed', 'true');
     
     requestNotificationPermission();
-    requestWakeLock(); // <--- Trigger Screen Lock
+    requestWakeLock();
     
-    // Play beep if manual
+    // Play loud beep to confirm activation
     if (!isAutoResume) {
         try {
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
             osc.connect(gain);
             gain.connect(ctx.destination);
-            osc.frequency.setValueAtTime(880, ctx.currentTime);
-            gain.gain.setValueAtTime(0.1, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + 0.1);
+            // Confirmation Sound: High Pitch chirp
+            osc.frequency.setValueAtTime(1000, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(2000, ctx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.3, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.3);
             osc.start();
-            osc.stop(ctx.currentTime + 0.1);
+            osc.stop(ctx.currentTime + 0.3);
         } catch (e) { console.error(e); }
     }
   };
@@ -189,8 +196,8 @@ export const UserBroadcast: React.FC = () => {
     setIsAlarmActive(true);
     setTimeout(() => { setIsAlarmActive(false); stopVibration(); }, 15000);
 
+    // Vibration
     if (navigator.vibrate) {
-        // SOS Pattern
         navigator.vibrate([200, 100, 200, 100, 200, 100, 500, 100, 500, 100, 500, 100]);
         if (vibrationIntervalRef.current) clearInterval(vibrationIntervalRef.current);
         vibrationIntervalRef.current = setInterval(() => {
@@ -198,6 +205,7 @@ export const UserBroadcast: React.FC = () => {
         }, 3000);
     }
 
+    // Audio
     if (!audioEnabled || !audioCtxRef.current) return;
     const ctx = audioCtxRef.current;
     if (ctx.state === 'suspended') ctx.resume();
@@ -231,7 +239,6 @@ export const UserBroadcast: React.FC = () => {
 
     if (lastAlertCount !== null && currentAlerts.length > lastAlertCount) {
       playSiren();
-      // Only show system notification if app is hidden (to avoid double notify)
       if (document.visibilityState === 'hidden') {
          if (currentAlerts.length > 0) showSystemNotification(currentAlerts[0]);
       }
@@ -241,7 +248,6 @@ export const UserBroadcast: React.FC = () => {
 
   useEffect(() => { fetchAlertsRef.current = fetchAlerts; }, [fetchAlerts]);
 
-  // Visual Heartbeat tick
   useEffect(() => {
     if (lastHeartbeat) {
       setShowHeartbeat(true);
@@ -304,6 +310,11 @@ export const UserBroadcast: React.FC = () => {
     }
   };
 
+  const handleDismissHelp = () => {
+      setShowConfigHelp(false);
+      setSkipConfig(true); 
+  };
+
   return (
     <div className={`min-h-screen text-white flex flex-col transition-colors duration-500 ${isAlarmActive ? 'alarm-flash' : 'bg-slate-900'}`}>
       <audio ref={silentAudioRef} src={SILENT_MP3} loop playsInline style={{ display: 'none' }} />
@@ -319,24 +330,16 @@ export const UserBroadcast: React.FC = () => {
               <h1 className="text-xl font-bold tracking-wider text-red-500">SENTINEL</h1>
               
               <div className="flex items-center gap-3 mt-1 text-[10px] font-mono">
-                 {isCloud ? <span className="text-green-400">● CLOUD</span> : <span className="text-yellow-500">● LOCAL</span>}
+                 {isCloud ? <span className="text-green-400">● ONLINE</span> : <span className="text-red-500 animate-pulse">● NO CONNECTION</span>}
                  
-                 {/* SCREEN LOCK INDICATOR */}
                  {audioEnabled && (
                     wakeLock ? (
-                        <span className="text-blue-400 flex items-center gap-1">
-                             <i className="fas fa-desktop"></i> SCREEN ON
-                        </span>
+                        <span className="text-blue-400 flex items-center gap-1"><i className="fas fa-desktop"></i> SCREEN ON</span>
                     ) : (
-                        <span className={`${wakeLockError ? 'text-red-400' : 'text-slate-500'} flex items-center gap-1`}>
-                             <i className="fas fa-desktop"></i> {wakeLockError ? 'LOCK FAILED' : 'NORMAL'}
-                        </span>
+                        <span className={`${wakeLockError ? 'text-red-400' : 'text-slate-500'} flex items-center gap-1`}><i className="fas fa-desktop"></i> {wakeLockError ? 'LOCK FAILED' : 'NORMAL'}</span>
                     )
                  )}
-                 
-                 <span className={`transition-opacity duration-200 ${showHeartbeat ? 'opacity-100 text-blue-400' : 'opacity-20 text-slate-500'}`}>
-                    <i className="fas fa-heartbeat"></i>
-                 </span>
+                 <span className={`transition-opacity duration-200 ${showHeartbeat ? 'opacity-100 text-blue-400' : 'opacity-20 text-slate-500'}`}><i className="fas fa-heartbeat"></i></span>
               </div>
             </div>
           </div>
@@ -361,36 +364,10 @@ export const UserBroadcast: React.FC = () => {
       </header>
 
       {/* CONFIG WARNINGS */}
-      {!firebaseConfigured && (
-        <div className="bg-red-900 text-white p-2 text-center text-xs font-bold border-b border-red-500">
-           ⚠️ PUSH NOTIFICATIONS DISABLED: Missing Firebase Config in 'services/firebase.ts'
-        </div>
-      )}
-      {firebaseConfigured && pushPermission === 'denied' && (
-        <div className="bg-yellow-900 text-white p-2 text-center text-xs font-bold border-b border-yellow-500">
-           ⚠️ PERMISSION DENIED: Reset site permissions to allow Notifications.
-        </div>
-      )}
-
-      {/* INSTALL BANNER (Bottom Fixed) */}
-      {showInstallBanner && !isAppInstalled && (
-        <div className="fixed bottom-0 left-0 right-0 z-[100] bg-slate-800 border-t border-slate-600 p-4 shadow-2xl animate-pulse">
-            <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                    <div className="bg-slate-700 p-2 rounded">
-                        <i className="fas fa-download text-blue-400"></i>
-                    </div>
-                    <div>
-                        <p className="font-bold text-sm text-white">Install App</p>
-                        <p className="text-xs text-slate-400">Install Sentinel for reliable background alerts.</p>
-                    </div>
-                </div>
-                <div className="flex gap-2">
-                    <button onClick={() => setShowInstallBanner(false)} className="px-3 py-1 text-xs text-slate-400 font-medium">Dismiss</button>
-                    <Button onClick={handleInstallClick} className="text-xs px-4 py-1">Install</Button>
-                </div>
-            </div>
-        </div>
+      {!isCloud && (
+         <div className="bg-red-600 text-white p-3 text-center text-sm font-bold animate-pulse">
+           ❌ NOT CONNECTED TO CLOUD. Alerts may not arrive. Refresh or check internet.
+         </div>
       )}
 
       {/* MAIN CONTENT */}
@@ -406,17 +383,14 @@ export const UserBroadcast: React.FC = () => {
                  </div>
              )}
              
-             {/* SCREEN LOCK INSTRUCTION */}
+             {/* INSTRUCTIONS */}
              <div className="mt-8 text-center max-w-sm mx-auto">
                 <div className="inline-block bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs text-left w-full">
                     <p className="font-bold text-slate-400 mb-2"><i className="fas fa-lightbulb text-yellow-500"></i> BEST PRACTICES</p>
                     <ul className="space-y-2 text-slate-500 list-disc pl-4">
                         <li>Turn Volume <strong>MAX</strong>.</li>
-                        <li>Keep this screen <strong>OPEN</strong> for continuous siren.</li>
-                        <li>Screen will stay <strong>ON</strong> automatically.</li>
-                        {!firebaseConfigured && (
-                           <li className="text-red-400 font-bold">Add Keys to services/firebase.ts for screen-off alerts!</li>
-                        )}
+                        <li>Keep screen <strong>OPEN</strong> for continuous siren.</li>
+                        <li className="text-blue-300">Tap "Activate System" to ensure sound works.</li>
                     </ul>
                 </div>
              </div>
