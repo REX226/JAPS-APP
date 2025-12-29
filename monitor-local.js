@@ -14,21 +14,46 @@ const require = createRequire(import.meta.url);
 const admin = require("firebase-admin");
 const fs = require("fs");
 
+// --- CONFIGURATION ---
+// 🔧 IF THE MONITOR SAYS "CONNECTED" BUT ADMIN PANEL SAYS "OFFLINE":
+// Paste your exact Database URL from the Admin Panel Settings here:
+const MANUAL_DB_URL = "https://japs-parivar-siren-default-rtdb.firebaseio.co"; // e.g. "https://sentinel-123-default-rtdb.asia-southeast1.firebasedatabase.app"
+
 // --- 1. SETUP CREDENTIALS ---
-if (!fs.existsSync("./service-account.json")) {
-    console.error("\n❌ ERROR: 'service-account.json' not found!");
+const keyFileName = "service-account.json";
+const keyFileNamePlural = "service-accounts.json";
+let serviceAccount;
+
+// Smart File Detection
+if (fs.existsSync(`./${keyFileName}`)) {
+    serviceAccount = require(`./${keyFileName}`);
+} else if (fs.existsSync(`./${keyFileNamePlural}`)) {
+    console.log(`⚠️  Found '${keyFileNamePlural}' instead of '${keyFileName}'. Using it anyway...`);
+    serviceAccount = require(`./${keyFileNamePlural}`);
+} else {
+    console.error("\n❌ ERROR: Key file not found!");
+    console.error(`   Expected: ./${keyFileName}`);
     console.error("   1. Go to Firebase Console -> Project Settings -> Service Accounts");
     console.error("   2. Generate New Private Key");
-    console.error("   3. Rename it to 'service-account.json' and place it in this folder.\n");
+    console.error("   3. Move it to this folder and rename it to 'service-account.json'");
     process.exit(1);
 }
 
-const serviceAccount = require("./service-account.json");
+// Determine Database URL
+// Priority: 1. Manual Override, 2. Constructed from Project ID
+const dbUrl = MANUAL_DB_URL || `https://${serviceAccount.project_id}-default-rtdb.firebaseio.com`;
+
+console.log("\n========================================");
+console.log("   🛡️  SENTINEL MONITOR STARTING");
+console.log("========================================");
+console.log(`✅ Project ID:  ${serviceAccount.project_id}`);
+console.log(`🔗 Database:    ${dbUrl}`);
+console.log("----------------------------------------");
 
 try {
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
-      databaseURL: `https://${serviceAccount.project_id}-default-rtdb.firebaseio.com` 
+      databaseURL: dbUrl
     });
 } catch (e) {
     console.error("❌ Firebase Auth Error:", e.message);
@@ -41,39 +66,46 @@ const alertsRef = db.ref("/sentinel_alerts_v1");
 const recurringRef = db.ref("/sentinel_recurring_v1");
 const statusRef = db.ref("/sentinel_status/monitor");
 
-console.log("\n========================================");
-console.log("   🛡️  SENTINEL MONITOR ACTIVE");
-console.log("========================================");
-console.log(`✅ Project: ${serviceAccount.project_id}`);
+// --- 2. CONNECTION CHECK ---
+db.ref(".info/connected").on("value", (snap) => {
+    if (snap.val() === true) {
+        console.log("🟢 Database Connected! Waiting for alerts...");
+    } else {
+        console.log("🟡 Connecting to Database...");
+    }
+});
 
-// --- 2. HEARTBEAT SYSTEM ---
+// --- 3. HEARTBEAT SYSTEM ---
 function startHeartbeat() {
-    console.log("💓 Heartbeat started.");
-    
     const updateStatus = () => {
         statusRef.update({
             online: true,
             last_seen: Date.now()
-        }).catch(() => {});
+        }).catch((err) => {
+            if (err.code === 'ENOTFOUND') {
+                console.error("❌ Network Error: Cannot reach Firebase. Check internet.");
+            } else if (err.code === 'PERMISSION_DENIED') {
+                 console.error("❌ Permission Denied: Your service-account.json does not have permission to write to this DB.");
+                 console.error("   Check if the 'project_id' in the json file matches the Database URL.");
+            }
+        });
     };
 
     updateStatus();
     setInterval(updateStatus, 5000);
 
     const onExit = () => {
-        console.log("🛑 Stopping Monitor...");
+        console.log("\n🛑 Stopping Monitor...");
         statusRef.update({ online: false }).then(() => process.exit(0));
     };
     process.on('SIGINT', onExit);
     process.on('SIGTERM', onExit);
 }
 
-// --- 3. STANDARD ALERT MONITORING ---
+// --- 4. STANDARD ALERT MONITORING ---
 let lastProcessedId = null;
 
 function startAlertListener() {
-    console.log("📡 Listening for Standard Alerts...");
-    
     // Initial sync to find the last ID so we don't re-send old alerts
     alertsRef.limitToLast(1).once('value', (snapshot) => {
         const val = snapshot.val();
@@ -93,7 +125,8 @@ function startAlertListener() {
             const latestAlert = alertList[alertList.length - 1];
 
             if (latestAlert.id !== lastProcessedId) {
-                console.log(`\n🔔 NEW ALERT: [${latestAlert.severity}] ${latestAlert.content}`);
+                console.log(`\n🔔 NEW ALERT DETECTED: [${latestAlert.severity}]`);
+                console.log(`   "${latestAlert.content}"`);
                 lastProcessedId = latestAlert.id;
                 await sendNotifications(latestAlert);
             }
@@ -101,19 +134,15 @@ function startAlertListener() {
     });
 }
 
-// --- 4. RECURRING ALERT SCHEDULER ---
+// --- 5. RECURRING ALERT SCHEDULER ---
 let recurringRules = [];
 let lastMinuteChecked = null;
 
 function startRecurringScheduler() {
-    console.log("⏰ Recurring Scheduler Active.");
-    
     // Keep local rules synced
     recurringRef.on('value', (snap) => {
         const val = snap.val();
         recurringRules = val ? (Array.isArray(val) ? val : Object.values(val)) : [];
-        const activeCount = recurringRules.filter(r => r.isActive).length;
-        console.log(`   └─ Loaded ${activeCount} active recurring rules.`);
     });
 
     // Check every 10 seconds (to hit the minute mark accurately)
@@ -147,11 +176,11 @@ function startRecurringScheduler() {
     }, 10000);
 }
 
-// --- 5. NOTIFICATION SENDER ---
+// --- 6. NOTIFICATION SENDER ---
 async function sendNotifications(alertData) {
     const tokensSnapshot = await db.ref("fcm_tokens").once("value");
     if (!tokensSnapshot.exists()) {
-        console.log("⚠️  Skipping push: No devices registered.");
+        console.log("⚠️  Skipping push: No devices registered yet.");
         return;
     }
 
@@ -173,7 +202,7 @@ async function sendNotifications(alertData) {
             alertId: alertData.id,
             severity: alertData.severity,
             forceAlarm: "true",
-            url: "https://sentinel-alert.netlify.app/", // Replace with your actual deployed URL if needed
+            url: "https://sentinel-alert.netlify.app/", 
             timestamp: Date.now().toString()
         },
         // Android specific: High Priority to wake screen and show on lockscreen
@@ -186,7 +215,7 @@ async function sendNotifications(alertData) {
                 visibility: "public", // Show content on lock screen
                 defaultSound: true,
                 defaultVibrateTimings: true,
-                icon: "stock_ticker_update" // Uses default system icon if mapped
+                icon: "stock_ticker_update" 
             }
         },
         // Web Push: Standard headers
@@ -200,7 +229,7 @@ async function sendNotifications(alertData) {
                 requireInteraction: true, // Notification stays until user clicks
                 renotify: true, // Vibrate/Sound even if previous notif exists
                 tag: "sentinel-alert",
-                vibrate: [500, 200, 500, 200, 1000, 500, 200, 500] // Long vibration pattern
+                vibrate: [500, 200, 500, 200, 1000, 500, 200, 500] 
             }
         }
     };
