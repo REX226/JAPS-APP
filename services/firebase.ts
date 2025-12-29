@@ -1,10 +1,17 @@
+
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set } from "firebase/database";
-import { getMessaging, getToken, onMessage } from "firebase/messaging";
+import { getMessaging, getToken } from "firebase/messaging";
 
-// 1. Firebase Configuration
-// GO TO: Firebase Console > Project Settings > General > Your apps > SDK Setup and Configuration
-// COPY the values from there and PASTE them below.
+// -----------------------------------------------------------
+// ✅ ACTIVE CONFIGURATION FILE
+// -----------------------------------------------------------
+// 🔧 INSTRUCTIONS
+// 1. Go to Firebase Console -> Project Settings
+// 2. Scroll down to "SDK Setup and Configuration"
+// 3. Copy the 'firebaseConfig' object keys and paste below.
+// -----------------------------------------------------------
+
 const firebaseConfig = {
   apiKey: "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU",
   authDomain: "japs-parivar-siren.firebaseapp.com",
@@ -16,54 +23,67 @@ const firebaseConfig = {
   measurementId: "G-18MNV84E8X"
 };
 
-// Initialize only if we have a valid API Key (prevents errors during initial setup)
-const isConfigured = firebaseConfig.apiKey !== "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU";
+// Check if configured
+const isConfigured = firebaseConfig.apiKey !== "PASTE_YOUR_API_KEY_HERE";
+
+if (!isConfigured) {
+    // Console log disabled to keep clean
+} else {
+    console.warn("⚠️ Firebase is NOT configured. Push notifications will not work.");
+}
 
 const app = isConfigured ? initializeApp(firebaseConfig) : null;
 const db = app ? getDatabase(app) : null;
 const messaging = app ? getMessaging(app) : null;
 
+// --- EXPORTS ---
+export const checkFirebaseConfig = () => {
+    return isConfigured;
+};
+
 export const initializePushNotifications = async () => {
-  if (!messaging || !db) {
-    console.warn("Firebase not configured. Notifications disabled.");
-    return;
-  }
+  if (!messaging || !db) return false;
 
   try {
-    // 1. Request Permission
     const permission = await Notification.requestPermission();
-    if (permission !== 'granted') return;
+    if (permission !== 'granted') {
+        console.log("❌ Notification permission denied");
+        return false;
+    }
 
-    // 2. Get Device Token
+    // Get FCM Token
     const token = await getToken(messaging, { 
-      // Optional: Add vapidKey here if you generated one in Cloud Messaging settings
+      // If you have a VAPID key, add it here: vapidKey: "..."
     });
 
     if (token) {
-      console.log("FCM Token:", token);
-      saveTokenToDatabase(token);
+      console.log("✅ FCM Token Generated:", token);
+      await saveTokenToDatabase(token);
+      return true;
     }
-    
-    // 3. Handle Foreground Messages
-    onMessage(messaging, (payload) => {
-      console.log('Foreground Message:', payload);
-      // We rely on polling-worker for UI updates, but this ensures connectivity
-    });
+    return false;
 
   } catch (error) {
-    console.error("Error setting up notifications:", error);
+    console.error("Error initializing notifications:", error);
+    return false;
   }
 };
 
 const saveTokenToDatabase = async (token: string) => {
   if (!db) return;
-  // Use a sanitized token as the key to prevent duplicates
-  const tokenKey = token.substring(0, 20) + "..." + token.substring(token.length - 5);
   
-  // Store in database
-  await set(ref(db, `fcm_tokens/${token.replace(/[.\#$\[\]]/g, "_")}`), {
-    token: token,
-    lastSeen: Date.now(),
-    deviceInfo: navigator.userAgent
-  });
+  // Create a safe key for the database
+  const safeKey = token.substring(0, 10) + "..." + token.substring(token.length - 5);
+  
+  // Save token with metadata
+  try {
+      await set(ref(db, `fcm_tokens/${token.replace(/[.\#$\[\]]/g, "_")}`), {
+        token: token,
+        updatedAt: Date.now(),
+        userAgent: navigator.userAgent
+      });
+      console.log("✅ Token saved to Realtime Database");
+  } catch(e) {
+      console.error("❌ Failed to save token to DB:", e);
+  }
 };

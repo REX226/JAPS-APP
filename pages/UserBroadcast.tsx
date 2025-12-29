@@ -6,6 +6,7 @@ import { getActiveAlerts } from '../services/storage';
 import { AlertCard } from '../components/AlertCard';
 import { Button } from '../components/Button';
 import { isCloudEnabled } from '../services/config';
+import { initializePushNotifications, checkFirebaseConfig } from '../services/firebase';
 
 // Tiny silent MP3 to keep the audio channel open and background execution alive
 const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV6urq6urq6urq6urq6urq6urq6urq6urq6v////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAASAAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA";
@@ -29,6 +30,10 @@ export const UserBroadcast: React.FC = () => {
   const [lastHeartbeat, setLastHeartbeat] = useState<number>(Date.now());
   const [showHeartbeat, setShowHeartbeat] = useState(false);
   
+  // Config Status
+  const [firebaseConfigured, setFirebaseConfigured] = useState(true);
+  const [pushPermission, setPushPermission] = useState<string>('default');
+  
   // Refs
   const audioCtxRef = useRef<AudioContext | null>(null);
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -48,16 +53,24 @@ export const UserBroadcast: React.FC = () => {
         setIsAppInstalled(true);
     }
     
-    // Request permission immediately on load if possible
-    if ("Notification" in window && Notification.permission !== "granted") {
-        Notification.requestPermission();
+    // Check Config
+    setFirebaseConfigured(checkFirebaseConfig());
+    if ("Notification" in window) {
+        setPushPermission(Notification.permission);
+    }
+
+    // Try to init push if cloud is active
+    if (isCloudEnabled() && checkFirebaseConfig()) {
+        initializePushNotifications();
     }
   }, []);
 
   const requestNotificationPermission = async () => {
     if (!("Notification" in window)) return;
-    if (Notification.permission !== "granted" && Notification.permission !== "denied") {
-      await Notification.requestPermission();
+    const perm = await Notification.requestPermission();
+    setPushPermission(perm);
+    if (perm === 'granted' && checkFirebaseConfig()) {
+        initializePushNotifications();
     }
   };
 
@@ -347,6 +360,18 @@ export const UserBroadcast: React.FC = () => {
         </div>
       </header>
 
+      {/* CONFIG WARNINGS */}
+      {!firebaseConfigured && (
+        <div className="bg-red-900 text-white p-2 text-center text-xs font-bold border-b border-red-500">
+           ⚠️ PUSH NOTIFICATIONS DISABLED: Missing Firebase Config in 'services/firebase.ts'
+        </div>
+      )}
+      {firebaseConfigured && pushPermission === 'denied' && (
+        <div className="bg-yellow-900 text-white p-2 text-center text-xs font-bold border-b border-yellow-500">
+           ⚠️ PERMISSION DENIED: Reset site permissions to allow Notifications.
+        </div>
+      )}
+
       {/* INSTALL BANNER (Bottom Fixed) */}
       {showInstallBanner && !isAppInstalled && (
         <div className="fixed bottom-0 left-0 right-0 z-[100] bg-slate-800 border-t border-slate-600 p-4 shadow-2xl animate-pulse">
@@ -382,13 +407,16 @@ export const UserBroadcast: React.FC = () => {
              )}
              
              {/* SCREEN LOCK INSTRUCTION */}
-             <div className="mt-8 text-center">
-                <div className="inline-block bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs text-left">
+             <div className="mt-8 text-center max-w-sm mx-auto">
+                <div className="inline-block bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs text-left w-full">
                     <p className="font-bold text-slate-400 mb-2"><i className="fas fa-lightbulb text-yellow-500"></i> BEST PRACTICES</p>
-                    <ul className="space-y-1 text-slate-500 list-disc pl-4">
+                    <ul className="space-y-2 text-slate-500 list-disc pl-4">
                         <li>Turn Volume <strong>MAX</strong>.</li>
-                        <li>Keep this screen <strong>OPEN</strong> (Do not swipe away).</li>
-                        <li>Screen will stay <strong>ON</strong> (Wake Lock: {wakeLock ? 'Active' : 'Inactive'}).</li>
+                        <li>Keep this screen <strong>OPEN</strong> for continuous siren.</li>
+                        <li>Screen will stay <strong>ON</strong> automatically.</li>
+                        {!firebaseConfigured && (
+                           <li className="text-red-400 font-bold">Add Keys to services/firebase.ts for screen-off alerts!</li>
+                        )}
                     </ul>
                 </div>
              </div>

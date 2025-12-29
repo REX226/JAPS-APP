@@ -15,9 +15,11 @@ const admin = require("firebase-admin");
 const fs = require("fs");
 
 // --- CONFIGURATION ---
-// 🔧 IF THE MONITOR SAYS "CONNECTED" BUT ADMIN PANEL SAYS "OFFLINE":
-// Paste your exact Database URL from the Admin Panel Settings here:
-const MANUAL_DB_URL = "https://japs-parivar-siren-default-rtdb.firebaseio.co"; // e.g. "https://sentinel-123-default-rtdb.asia-southeast1.firebasedatabase.app"
+// 🔧 IF MONITOR SAYS "CONNECTED" BUT DASHBOARD SAYS "OFFLINE":
+// 1. Go to Admin Dashboard -> Settings.
+// 2. Copy the URL from there.
+// 3. Paste it inside the quotes below:
+const MANUAL_DB_URL = "https://japs-parivar-siren-default-rtdb.firebaseio.com"; 
 
 // --- 1. SETUP CREDENTIALS ---
 const keyFileName = "service-account.json";
@@ -26,21 +28,21 @@ let serviceAccount;
 
 // Smart File Detection
 if (fs.existsSync(`./${keyFileName}`)) {
+    console.log(`✅ FOUND KEY FILE: ${keyFileName}`);
     serviceAccount = require(`./${keyFileName}`);
 } else if (fs.existsSync(`./${keyFileNamePlural}`)) {
     console.log(`⚠️  Found '${keyFileNamePlural}' instead of '${keyFileName}'. Using it anyway...`);
     serviceAccount = require(`./${keyFileNamePlural}`);
 } else {
     console.error("\n❌ ERROR: Key file not found!");
-    console.error(`   Expected: ./${keyFileName}`);
+    console.error(`   Expected: ./${keyFileName} OR ./${keyFileNamePlural}`);
     console.error("   1. Go to Firebase Console -> Project Settings -> Service Accounts");
     console.error("   2. Generate New Private Key");
-    console.error("   3. Move it to this folder and rename it to 'service-account.json'");
+    console.error("   3. Move it to this folder.");
     process.exit(1);
 }
 
 // Determine Database URL
-// Priority: 1. Manual Override, 2. Constructed from Project ID
 const dbUrl = MANUAL_DB_URL || `https://${serviceAccount.project_id}-default-rtdb.firebaseio.com`;
 
 console.log("\n========================================");
@@ -81,14 +83,7 @@ function startHeartbeat() {
         statusRef.update({
             online: true,
             last_seen: Date.now()
-        }).catch((err) => {
-            if (err.code === 'ENOTFOUND') {
-                console.error("❌ Network Error: Cannot reach Firebase. Check internet.");
-            } else if (err.code === 'PERMISSION_DENIED') {
-                 console.error("❌ Permission Denied: Your service-account.json does not have permission to write to this DB.");
-                 console.error("   Check if the 'project_id' in the json file matches the Database URL.");
-            }
-        });
+        }).catch(() => {});
     };
 
     updateStatus();
@@ -106,7 +101,6 @@ function startHeartbeat() {
 let lastProcessedId = null;
 
 function startAlertListener() {
-    // Initial sync to find the last ID so we don't re-send old alerts
     alertsRef.limitToLast(1).once('value', (snapshot) => {
         const val = snapshot.val();
         if (val) {
@@ -114,7 +108,6 @@ function startAlertListener() {
             if (list.length > 0) lastProcessedId = list[list.length - 1].id;
         }
         
-        // Listen for new ones
         alertsRef.on("value", async (change) => {
             const allAlerts = change.val();
             if (!allAlerts) return;
@@ -125,8 +118,7 @@ function startAlertListener() {
             const latestAlert = alertList[alertList.length - 1];
 
             if (latestAlert.id !== lastProcessedId) {
-                console.log(`\n🔔 NEW ALERT DETECTED: [${latestAlert.severity}]`);
-                console.log(`   "${latestAlert.content}"`);
+                console.log(`\n🔔 NEW ALERT: ${latestAlert.content}`);
                 lastProcessedId = latestAlert.id;
                 await sendNotifications(latestAlert);
             }
@@ -139,18 +131,14 @@ let recurringRules = [];
 let lastMinuteChecked = null;
 
 function startRecurringScheduler() {
-    // Keep local rules synced
     recurringRef.on('value', (snap) => {
         const val = snap.val();
         recurringRules = val ? (Array.isArray(val) ? val : Object.values(val)) : [];
     });
 
-    // Check every 10 seconds (to hit the minute mark accurately)
     setInterval(() => {
         const now = new Date();
         const currentMinute = now.getMinutes();
-        
-        // Only trigger once per minute
         if (currentMinute === lastMinuteChecked) return;
         
         const hours = now.getHours().toString().padStart(2, '0');
@@ -159,30 +147,22 @@ function startRecurringScheduler() {
 
         recurringRules.forEach(async (rule) => {
             if (rule.isActive && rule.scheduledTime === currentTimeStr) {
-                console.log(`\n🔄 RECURRING TRIGGER: ${rule.content}`);
-                
-                // Create a temporary alert object for the push payload
-                const alertPayload = {
+                console.log(`\n🔄 RECURRING: ${rule.content}`);
+                await sendNotifications({
                     id: `recurring-${rule.id}-${Date.now()}`,
                     severity: rule.severity,
                     content: `[DAILY] ${rule.content}`
-                };
-                
-                await sendNotifications(alertPayload);
+                });
             }
         });
-
         lastMinuteChecked = currentMinute;
     }, 10000);
 }
 
-// --- 6. NOTIFICATION SENDER ---
+// --- 6. NOTIFICATION SENDER (HIGH PRIORITY) ---
 async function sendNotifications(alertData) {
     const tokensSnapshot = await db.ref("fcm_tokens").once("value");
-    if (!tokensSnapshot.exists()) {
-        console.log("⚠️  Skipping push: No devices registered yet.");
-        return;
-    }
+    if (!tokensSnapshot.exists()) return;
 
     const tokens = [];
     tokensSnapshot.forEach(child => {
@@ -190,9 +170,9 @@ async function sendNotifications(alertData) {
         if (t) tokens.push(t);
     });
 
-    console.log(`🚀 Sending Push to ${tokens.length} devices...`);
+    if (tokens.length === 0) return;
 
-    // HIGH PRIORITY PAYLOAD TO WAKE UP SCREEN
+    // Payload designed to break through Doze mode
     const payload = {
         notification: {
             title: `🚨 ${alertData.severity} ALERT`,
@@ -202,34 +182,28 @@ async function sendNotifications(alertData) {
             alertId: alertData.id,
             severity: alertData.severity,
             forceAlarm: "true",
-            url: "https://sentinel-alert.netlify.app/", 
             timestamp: Date.now().toString()
         },
-        // Android specific: High Priority to wake screen and show on lockscreen
         android: {
-            priority: "high", 
-            ttl: 0, // Deliver immediately or fail
+            priority: "high", // Wakes screen
+            ttl: 0, // Deliver immediately
             notification: {
-                priority: "max", // Heads-up notification (popup)
-                channelId: "sentinel_channel_critical",
-                visibility: "public", // Show content on lock screen
+                priority: "max",
+                channelId: "sentinel_channel_critical", // Uses system alert channel
                 defaultSound: true,
                 defaultVibrateTimings: true,
-                icon: "stock_ticker_update" 
+                visibility: "public"
             }
         },
-        // Web Push: Standard headers
         webpush: {
             headers: { 
-                Urgency: "high",
-                TTL: "0" 
+                Urgency: "high"
             },
             notification: {
-                silent: false,
-                requireInteraction: true, // Notification stays until user clicks
-                renotify: true, // Vibrate/Sound even if previous notif exists
-                tag: "sentinel-alert",
-                vibrate: [500, 200, 500, 200, 1000, 500, 200, 500] 
+                requireInteraction: true,
+                renotify: true,
+                tag: `sentinel-alert-${Date.now()}`, // Unique tag forces new vibration
+                silent: false
             }
         }
     };
@@ -239,13 +213,12 @@ async function sendNotifications(alertData) {
             tokens: tokens,
             ...payload
         });
-        console.log(`✅ Result: ${response.successCount} sent, ${response.failureCount} failed.`);
+        console.log(`🚀 Sent to ${response.successCount} devices.`);
     } catch (e) {
         console.error("🔥 Error sending:", e);
     }
 }
 
-// --- STARTUP ---
 startHeartbeat();
 startAlertListener();
 startRecurringScheduler();
