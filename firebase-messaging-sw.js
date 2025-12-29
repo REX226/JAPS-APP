@@ -4,8 +4,7 @@ importScripts('https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js')
 importScripts('https://www.gstatic.com/firebasejs/9.0.0/firebase-messaging-compat.js');
 
 // -----------------------------------------------------------
-// 🔧 CONFIGURATION REQUIRED
-// Use the SAME config as in services/firebase.ts
+// 🔧 CONFIGURATION REQUIRED (MUST MATCH services/firebase.ts)
 // -----------------------------------------------------------
 const firebaseConfig = {
   apiKey: "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU",
@@ -18,7 +17,7 @@ const firebaseConfig = {
   measurementId: "G-18MNV84E8X"
 };
 
-if (firebaseConfig.apiKey !== "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU") {
+if (firebaseConfig.apiKey !== "PASTE_YOUR_API_KEY_HERE") {
   firebase.initializeApp(firebaseConfig);
   const messaging = firebase.messaging();
 
@@ -29,12 +28,15 @@ if (firebaseConfig.apiKey !== "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU") {
     const title = payload.notification?.title || '🚨 SENTINEL ALERT';
     const body = payload.notification?.body || 'Emergency Broadcast Received';
     
-    // Aggressive vibration for attention (SOS pattern)
-    // 3 short, 3 long, 3 short
+    // 🔊 AGGRESSIVE VIBRATION PATTERN (SOS + Long Buzz)
+    // The browser will vibrate the phone even if the screen is off (on supported Androids)
     const vibrationPattern = [
+        // SOS
         200, 100, 200, 100, 200, 100, 
         500, 100, 500, 100, 500, 100, 
-        200, 100, 200, 100, 200
+        200, 100, 200, 100, 200, 500,
+        // LONG BUZZ
+        1000, 200, 1000, 200, 1000
     ];
 
     const notificationOptions = {
@@ -42,9 +44,9 @@ if (firebaseConfig.apiKey !== "AIzaSyBzBlEr1WSMy5ornhdEvEmLvg_9oKsYqDU") {
       icon: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
       badge: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
       tag: 'sentinel-alert',
-      renotify: true,         // Alert again even if one exists
-      requireInteraction: true, // Keep notification on screen until user clicks
-      silent: false,          // Ensure sound plays (system default)
+      renotify: true,           // Vibrate again even if old notification is still there
+      requireInteraction: true, // Wait for user to dismiss
+      silent: false,            // Play default system notification sound
       vibrate: vibrationPattern,
       data: {
         url: self.location.origin,
