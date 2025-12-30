@@ -8,10 +8,10 @@ self.onmessage = function(e) {
   if (e.data === 'start') {
     if (intervalId) clearInterval(intervalId);
     
-    // Check every 2 seconds
+    // Check every 1 second (Changed from 2000 to 1000)
     intervalId = setInterval(() => {
       self.postMessage('tick');
-    }, 2000);
+    }, 1000);
   } else if (e.data === 'stop') {
     if (intervalId) clearInterval(intervalId);
     intervalId = null;
