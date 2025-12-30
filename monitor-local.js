@@ -137,7 +137,7 @@ function startRecurringScheduler() {
         recurringRules = val ? (Array.isArray(val) ? val : Object.values(val)) : [];
     });
 
-    // ✅ REDUCED TO 2 SECONDS (Checks if minute changed more frequently)
+    // ✅ REDUCED TO 2 SECONDS
     setInterval(() => {
         const now = new Date();
         const currentMinute = now.getMinutes();
@@ -177,8 +177,8 @@ async function sendNotifications(alertData) {
     // Payload designed to break through Doze mode
     const payload = {
         notification: {
-            title: `🚨 ${alertData.severity} ALERT`,
-            body: alertData.content,
+            title: `🚨 ${alertData.severity} ALERT 🚨`,
+            body: `${alertData.content}`,
         },
         data: {
             alertId: alertData.id,
@@ -191,21 +191,30 @@ async function sendNotifications(alertData) {
             ttl: 0, // Deliver immediately
             notification: {
                 priority: "max",
-                channelId: "sentinel_channel_critical", // Uses system alert channel
+                // 🔔 NEW CHANNEL ID to force fresh sound settings on device
+                channelId: "sentinel_emergency_v3", 
                 defaultSound: true,
                 defaultVibrateTimings: true,
-                visibility: "public"
+                visibility: "public",
+                sound: "default",
+                notificationCount: 1,
+                clickAction: "FLUTTER_NOTIFICATION_CLICK" // Standard compat flag
             }
         },
         webpush: {
             headers: { 
                 Urgency: "high"
             },
+            fcm_options: {
+                link: "https://japs-parivar-siren.web.app/?emergency=true"
+            },
             notification: {
                 requireInteraction: true,
                 renotify: true,
-                tag: `sentinel-alert-${Date.now()}`, // Unique tag forces new vibration
-                silent: false
+                tag: `sentinel-alert-${Date.now()}`,
+                silent: false,
+                // Explicitly requesting default sound for web push
+                sound: "default" 
             }
         }
     };

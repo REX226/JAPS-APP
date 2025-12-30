@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertMessage } from '../types';
 import { getActiveAlerts } from '../services/storage';
 import { AlertCard } from '../components/AlertCard';
@@ -13,13 +13,16 @@ const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Lj
 
 export const UserBroadcast: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [alerts, setAlerts] = useState<AlertMessage[]>([]);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [lastAlertCount, setLastAlertCount] = useState<number | null>(null);
   
+  // Emergency Mode State
+  const [isEmergencyMode, setIsEmergencyMode] = useState(false);
+  
   // Install State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
 
   // Status State
@@ -33,8 +36,6 @@ export const UserBroadcast: React.FC = () => {
   // Config Status
   const [firebaseConfigured, setFirebaseConfigured] = useState(true);
   const [pushPermission, setPushPermission] = useState<string>('default');
-  const [showConfigHelp, setShowConfigHelp] = useState(false);
-  const [skipConfig, setSkipConfig] = useState(false); 
   
   // Refs
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -55,10 +56,8 @@ export const UserBroadcast: React.FC = () => {
         setIsAppInstalled(true);
     }
     
-    // Check Config
     const isConf = checkFirebaseConfig();
     setFirebaseConfigured(isConf);
-    if (!isConf) setShowConfigHelp(true); 
 
     if ("Notification" in window) {
         setPushPermission(Notification.permission);
@@ -71,6 +70,12 @@ export const UserBroadcast: React.FC = () => {
     // Try to init push if cloud is active
     if (isCloudEnabled() && isConf) {
         initializePushNotifications();
+    }
+
+    // CHECK EMERGENCY FLAG
+    if (searchParams.get('emergency') === 'true') {
+        console.log("Opened via Emergency Notification");
+        setIsEmergencyMode(true);
     }
   }, []);
 
@@ -90,7 +95,6 @@ export const UserBroadcast: React.FC = () => {
         const lock = await (navigator as any).wakeLock.request('screen');
         setWakeLock(lock);
         setWakeLockError(false);
-        console.log('✅ Screen Wake Lock acquired');
         
         lock.addEventListener('release', () => {
           setWakeLock(null);
@@ -150,6 +154,7 @@ export const UserBroadcast: React.FC = () => {
     
     setAudioEnabled(true);
     localStorage.setItem('sentinel_armed', 'true');
+    setIsEmergencyMode(false); // Clear emergency overlay once enabled
     
     requestNotificationPermission();
     requestWakeLock();
@@ -168,6 +173,11 @@ export const UserBroadcast: React.FC = () => {
             gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.3);
             osc.start();
             osc.stop(ctx.currentTime + 0.3);
+            
+            // If opened via emergency, start the siren immediately
+            if (searchParams.get('emergency') === 'true' || isEmergencyMode) {
+               playSiren();
+            }
         } catch (e) { console.error(e); }
     }
   };
@@ -206,7 +216,7 @@ export const UserBroadcast: React.FC = () => {
     }
 
     // Audio
-    if (!audioEnabled || !audioCtxRef.current) return;
+    if (!audioCtxRef.current) return;
     const ctx = audioCtxRef.current;
     if (ctx.state === 'suspended') ctx.resume();
 
@@ -293,10 +303,9 @@ export const UserBroadcast: React.FC = () => {
     const handler = (e: any) => { 
         e.preventDefault(); 
         setDeferredPrompt(e); 
-        setShowInstallBanner(true);
     };
     window.addEventListener('beforeinstallprompt', handler);
-    window.addEventListener('appinstalled', () => { setIsAppInstalled(true); setShowInstallBanner(false); });
+    window.addEventListener('appinstalled', () => { setIsAppInstalled(true); setDeferredPrompt(null); });
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
@@ -304,20 +313,26 @@ export const UserBroadcast: React.FC = () => {
     if (deferredPrompt) {
       deferredPrompt.prompt();
       deferredPrompt.userChoice.then((res: any) => {
-        if (res.outcome === 'accepted') setShowInstallBanner(false);
-        setDeferredPrompt(null);
+        if (res.outcome === 'accepted') setDeferredPrompt(null);
       });
     }
-  };
-
-  const handleDismissHelp = () => {
-      setShowConfigHelp(false);
-      setSkipConfig(true); 
   };
 
   return (
     <div className={`min-h-screen text-white flex flex-col transition-colors duration-500 ${isAlarmActive ? 'alarm-flash' : 'bg-slate-900'}`}>
       <audio ref={silentAudioRef} src={SILENT_MP3} loop playsInline style={{ display: 'none' }} />
+
+      {/* EMERGENCY FULLSCREEN OVERLAY */}
+      {isEmergencyMode && (
+          <div 
+             className="fixed inset-0 z-[100] bg-red-600 flex flex-col items-center justify-center cursor-pointer animate-pulse"
+             onClick={() => enableAudio(false)}
+          >
+              <i className="fas fa-radiation text-9xl text-white mb-8 animate-bounce"></i>
+              <h1 className="text-4xl font-bold text-center text-white font-oswald mb-4">EMERGENCY ALERT</h1>
+              <p className="text-2xl text-white font-bold blink">TAP SCREEN TO LISTEN</p>
+          </div>
+      )}
 
       {/* HEADER */}
       <header className="bg-slate-800 border-b border-slate-700 p-4 sticky top-0 z-50 shadow-md">
@@ -345,6 +360,17 @@ export const UserBroadcast: React.FC = () => {
           </div>
           
           <div className="flex gap-2 items-center">
+            {/* INSTALL ICON BUTTON */}
+            {deferredPrompt && !isAppInstalled && (
+                <button 
+                  onClick={handleInstallClick}
+                  className="bg-blue-600 hover:bg-blue-500 text-white w-10 h-10 rounded-full flex items-center justify-center shadow-lg shadow-blue-900/50 animate-pulse mr-2 border border-blue-400"
+                  title="Download / Install App"
+                >
+                  <i className="fas fa-download"></i>
+                </button>
+            )}
+
             {!audioEnabled ? (
               <Button onClick={() => enableAudio(false)} variant="danger" className="animate-bounce font-bold shadow-lg shadow-red-900/50">
                 ACTIVATE SYSTEM
@@ -385,7 +411,7 @@ export const UserBroadcast: React.FC = () => {
              
              {/* INSTRUCTIONS */}
              <div className="mt-8 text-center max-w-sm mx-auto">
-                <div className="inline-block bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs text-left w-full">
+                <div className="inline-block bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs text-left w-full mb-4">
                     <p className="font-bold text-slate-400 mb-2"><i className="fas fa-lightbulb text-yellow-500"></i> BEST PRACTICES</p>
                     <ul className="space-y-2 text-slate-500 list-disc pl-4">
                         <li>Turn Volume <strong>MAX</strong>.</li>

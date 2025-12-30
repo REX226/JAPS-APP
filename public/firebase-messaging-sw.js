@@ -34,23 +34,27 @@ try {
     const body = payload.notification?.body || 'Emergency Broadcast Received';
     const timestamp = Date.now();
     
-    // 🔊 AGGRESSIVE VIBRATION PATTERN
+    // 🔊 EXTREME VIBRATION PATTERN (Simulates a siren rhythm)
+    // 1000ms vibe, 200ms pause, repeat...
     const vibrationPattern = [
-        500, 200, 500, 200, 500, 200, // SOS
-        1000, 500, 1000, 500, 1000 // Long buzzes
+        1000, 200, 1000, 200, 1000, 200, 
+        2000, 500, 2000, 500, 
+        1000, 200, 1000, 200
     ];
 
     const notificationOptions = {
       body: body,
       icon: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
       badge: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
-      tag: 'sentinel-alert-' + timestamp, // Unique tag forces new alert
+      tag: 'sentinel-alert-' + timestamp, 
       renotify: true,           
-      requireInteraction: true, 
-      silent: false,            
+      requireInteraction: true, // Won't go away until clicked
+      silent: false,           
+      // ⚠️ IMPORTANT: Explicitly requesting default sound to ring phone
+      sound: 'default', 
       vibrate: vibrationPattern,
       data: {
-        url: self.location.origin,
+        url: self.location.origin + '?emergency=true', 
         timestamp: timestamp
       }
     };
@@ -64,16 +68,26 @@ try {
 // Click Handler
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
+  
+  // Construct the URL to open (with the emergency flag)
+  const urlToOpen = new URL(self.location.origin).href + '?emergency=true';
+
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+      // 1. Try to find an existing window
       for (var i = 0; i < clientList.length; i++) {
         var client = clientList[i];
         if (client.url.includes('/') && 'focus' in client) {
-          return client.focus();
+            // Focus and navigate
+            return client.focus().then(c => {
+               if(c && c.navigate) return c.navigate(urlToOpen);
+               return c;
+            });
         }
       }
+      // 2. If no window exists, open a new one
       if (clients.openWindow) {
-        return clients.openWindow('./');
+        return clients.openWindow(urlToOpen);
       }
     })
   );
