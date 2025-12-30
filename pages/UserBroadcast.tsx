@@ -427,9 +427,22 @@ export const UserBroadcast: React.FC = () => {
           
           {/* LEFT: Identity - Using flex-1 and min-w-0 to allow shrinking */}
           <div className="flex items-center gap-3 overflow-hidden flex-1 min-w-0">
-            <div className={`w-10 h-10 flex-shrink-0 bg-red-600 rounded-full flex items-center justify-center shadow-lg shadow-red-900/50 ${isAlarmActive ? 'animate-spin' : 'animate-pulse'}`}>
-               <i className="fas fa-bullhorn text-white text-lg md:text-xl"></i>
-            </div>
+            
+            {/* LOGO REPLACEMENT: Show Install Button if not installed, otherwise show logo */}
+            {(!isAppInstalled || deferredPrompt) ? (
+              <button 
+                onClick={handleInstallClick}
+                className="w-10 h-10 flex-shrink-0 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center shadow-lg shadow-blue-900/50 animate-pulse text-white transition-all transform hover:scale-110"
+                title="Install App"
+              >
+                <i className="fas fa-download text-lg"></i>
+              </button>
+            ) : (
+              <div className={`w-10 h-10 flex-shrink-0 bg-red-600 rounded-full flex items-center justify-center shadow-lg shadow-red-900/50 ${isAlarmActive ? 'animate-spin' : 'animate-pulse'}`}>
+                <i className="fas fa-bullhorn text-white text-lg md:text-xl"></i>
+              </div>
+            )}
+
             <div className="flex flex-col min-w-0">
               <h1 className="text-lg md:text-xl font-bold tracking-wider text-red-500 leading-tight truncate">SENTINEL</h1>
               
@@ -450,17 +463,7 @@ export const UserBroadcast: React.FC = () => {
           
           {/* RIGHT: Actions - Prevent shrinking */}
           <div className="flex gap-2 items-center flex-shrink-0">
-            {/* Install Button Logic - Moved to Header */}
-            {(!isAppInstalled || deferredPrompt) && (
-               <Button 
-                 onClick={handleInstallClick} 
-                 variant="outline" 
-                 className="h-10 text-xs md:text-sm font-bold border-blue-500 text-blue-400 hover:bg-blue-900/20"
-               >
-                 <i className="fas fa-download mr-1"></i> INSTALL
-               </Button>
-            )}
-
+            {/* Install Button REMOVED from here */}
             {!audioEnabled ? (
               <Button onClick={() => enableAudio(false)} variant="danger" className="animate-bounce font-bold shadow-lg shadow-red-900/50 text-sm px-3 md:px-4 h-10">
                 ACTIVATE
@@ -496,7 +499,6 @@ export const UserBroadcast: React.FC = () => {
              
              {audioEnabled ? (
                  <>
-                   {/* Error warning removed from here */}
                    <div className="mt-2 text-green-500 text-xs font-mono animate-pulse">
                        <i className="fas fa-satellite-dish"></i> Background Signal Active
                    </div>
