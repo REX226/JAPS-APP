@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
@@ -61,4 +62,8 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
               &larr; Back to Public Broadcast
             </button>
           </div>
-        </form>       
+        </form>
+      </div>
+    </div>
+  );
+};
