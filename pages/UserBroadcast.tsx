@@ -52,9 +52,12 @@ export const UserBroadcast: React.FC = () => {
       enableAudio(true);
     }
     // Check install status
-    if (window.matchMedia('(display-mode: standalone)').matches) {
-        setIsAppInstalled(true);
-    }
+    const checkStandalone = () => {
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
+        setIsAppInstalled(!!isStandalone);
+    };
+    checkStandalone();
+    window.matchMedia('(display-mode: standalone)').addEventListener('change', checkStandalone);
     
     const isConf = checkFirebaseConfig();
     setFirebaseConfigured(isConf);
@@ -315,6 +318,14 @@ export const UserBroadcast: React.FC = () => {
       deferredPrompt.userChoice.then((res: any) => {
         if (res.outcome === 'accepted') setDeferredPrompt(null);
       });
+    } else {
+      // Manual Instructions for iOS or when prompt is not available
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+      if (isIOS) {
+          alert("📲 To Install on iPhone:\n\n1. Tap the 'Share' button at the bottom of Safari.\n2. Scroll down and tap 'Add to Home Screen'.");
+      } else {
+          alert("📲 To Install:\n\nTap the browser menu (three dots ⋮) and select 'Install App' or 'Add to Home Screen'.");
+      }
     }
   };
 
@@ -360,8 +371,8 @@ export const UserBroadcast: React.FC = () => {
           </div>
           
           <div className="flex gap-2 items-center">
-            {/* INSTALL ICON BUTTON */}
-            {deferredPrompt && !isAppInstalled && (
+            {/* INSTALL ICON BUTTON - ALWAYS VISIBLE IF NOT INSTALLED */}
+            {!isAppInstalled && (
                 <button 
                   onClick={handleInstallClick}
                   className="bg-blue-600 hover:bg-blue-500 text-white w-10 h-10 rounded-full flex items-center justify-center shadow-lg shadow-blue-900/50 animate-pulse mr-2 border border-blue-400"
