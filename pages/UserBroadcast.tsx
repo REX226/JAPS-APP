@@ -441,7 +441,7 @@ export const UserBroadcast: React.FC = () => {
         )}
       </main>
       
-      <footer className="bg-slate-950 p-6 border-t border-slate-900 flex flex-col md:flex-row justify-center items-center gap-6">
+      <footer className="bg-slate-950 p-6 border-t border-slate-900 flex flex-row justify-center items-center gap-6">
         {!isAppInstalled && (
             <button 
                 onClick={handleInstallClick}

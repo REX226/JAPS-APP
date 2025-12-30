@@ -206,10 +206,18 @@ export const getActiveAlerts = async (): Promise<AlertMessage[]> => {
   const now = new Date();
   const currentTimestamp = now.getTime();
   const todayDateString = now.toDateString(); 
+  
+  // LIFESPAN: 15 Minutes (in milliseconds)
+  // Alerts older than this will be filtered out from the view
+  const ALERT_LIFESPAN_MS = 15 * 60 * 1000;
 
   // 1. Standard Alerts
   const allAlerts = await getAlerts();
-  const standardAlerts = allAlerts.filter(a => a.scheduledTime <= currentTimestamp);
+  const standardAlerts = allAlerts.filter(a => {
+      const age = currentTimestamp - a.scheduledTime;
+      // Must be in the past (scheduledTime <= now) AND not older than 15 mins
+      return a.scheduledTime <= currentTimestamp && age < ALERT_LIFESPAN_MS;
+  });
 
   // 2. Recurring Alerts
   const allRecurring = await getRecurringAlerts();
@@ -222,8 +230,10 @@ export const getActiveAlerts = async (): Promise<AlertMessage[]> => {
       const alertTime = new Date(now);
       alertTime.setHours(hours, minutes, 0, 0);
       
-      // If the time has passed today
-      if (currentTimestamp >= alertTime.getTime()) {
+      const age = currentTimestamp - alertTime.getTime();
+      
+      // If the time has passed today AND it is within the 15 minute window
+      if (age >= 0 && age < ALERT_LIFESPAN_MS) {
         syntheticAlerts.push({
           id: `recurring-${r.id}-${todayDateString}`, 
           content: `[DAILY REPEAT] ${r.content}`,
