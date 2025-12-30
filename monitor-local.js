@@ -1,4 +1,3 @@
-
 /**
  * SENTINEL MONITOR (CLOUD READY)
  * 
@@ -226,6 +225,13 @@ async function sendNotifications(alertData) {
         console.error("🔥 Error sending:", e);
     }
 }
+
+// --- 7. AUTO MAINTENANCE ---
+// Restart every 24 hours to prevent memory leaks on free hosting
+setInterval(() => {
+    console.log("♻️  Daily Maintenance: Restarting process...");
+    process.exit(0); 
+}, 86400000);
 
 startHeartbeat();
 startMasterScheduler();
