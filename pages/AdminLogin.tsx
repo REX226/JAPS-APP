@@ -61,13 +61,4 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
               &larr; Back to Public Broadcast
             </button>
           </div>
-        </form>
-        
-        <div className="mt-8 p-4 bg-slate-900/50 rounded text-xs text-slate-500 font-mono text-center">
-          <p>Demo Credentials:</p>
-          <p>User: admin | Pass: yogiji</p>
-        </div>
-      </div>
-    </div>
-  );
-};
+        </form>       
