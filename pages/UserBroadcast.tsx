@@ -19,6 +19,7 @@ export const UserBroadcast: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [alerts, setAlerts] = useState<AlertMessage[]>([]);
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [isSilentPlaying, setIsSilentPlaying] = useState(false);
   const [lastAlertCount, setLastAlertCount] = useState<number | null>(null);
   
   // Emergency Mode State
@@ -140,6 +141,7 @@ export const UserBroadcast: React.FC = () => {
         const playPromise = silentAudioRef.current.play();
         if (playPromise !== undefined) {
             playPromise.then(() => {
+                // Success handled by onPlay event listener
                 if ('mediaSession' in navigator) {
                     navigator.mediaSession.metadata = new MediaMetadata({
                         title: 'Sentinel Active',
@@ -149,7 +151,10 @@ export const UserBroadcast: React.FC = () => {
                     navigator.mediaSession.setActionHandler('play', () => { silentAudioRef.current?.play(); });
                     navigator.mediaSession.playbackState = 'playing';
                 }
-            }).catch(() => console.log("Auto-play prevented"));
+            }).catch(() => {
+                console.log("Auto-play prevented");
+                setIsSilentPlaying(false);
+            });
         }
     }
     
@@ -188,7 +193,10 @@ export const UserBroadcast: React.FC = () => {
     if (wakeLock) {
         wakeLock.release().then(() => setWakeLock(null));
     }
-    if (silentAudioRef.current) silentAudioRef.current.pause();
+    if (silentAudioRef.current) {
+        silentAudioRef.current.pause();
+        setIsSilentPlaying(false);
+    }
     if (alarmAudioRef.current) {
         alarmAudioRef.current.pause();
         alarmAudioRef.current.currentTime = 0;
@@ -320,7 +328,16 @@ export const UserBroadcast: React.FC = () => {
 
   return (
     <div className={`min-h-screen text-white flex flex-col transition-colors duration-500 ${isAlarmActive ? 'alarm-flash' : 'bg-slate-900'}`}>
-      <audio ref={silentAudioRef} src={SILENT_MP3} loop playsInline style={{ display: 'none' }} />
+      <audio 
+        ref={silentAudioRef} 
+        src={SILENT_MP3} 
+        loop 
+        playsInline 
+        // Using opacity 0 and absolute position ensures it is rendered in DOM but invisible, preventing some browser auto-pause policies
+        style={{ position: 'absolute', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none' }} 
+        onPlay={() => setIsSilentPlaying(true)}
+        onPause={() => setIsSilentPlaying(false)}
+      />
       {/* Alarm Audio - Not displayed, used for playback */}
       <audio ref={alarmAudioRef} src={ALARM_MP3} playsInline style={{ display: 'none' }} />
 
@@ -400,7 +417,8 @@ export const UserBroadcast: React.FC = () => {
              
              {audioEnabled ? (
                  <>
-                   {silentAudioRef.current?.paused && (
+                   {/* Check 'isSilentPlaying' state instead of ref to prevent false positives during React render cycle */}
+                   {!isSilentPlaying && (
                        <div className="mt-4 p-3 bg-yellow-900/30 text-yellow-500 border border-yellow-800 rounded text-sm animate-pulse cursor-pointer" onClick={() => enableAudio(false)}>
                           <i className="fas fa-exclamation-circle mr-2"></i> Audio suspended. Tap to fix.
                        </div>
@@ -441,16 +459,17 @@ export const UserBroadcast: React.FC = () => {
         )}
       </main>
       
-      <footer className="bg-slate-950 p-6 border-t border-slate-900 flex flex-row justify-center items-center gap-6">
+      {/* Footer: Flex Row and Nowrap to ensure side-by-side on mobile */}
+      <footer className="bg-slate-950 p-4 border-t border-slate-900 flex flex-row justify-center items-center gap-4 flex-nowrap">
         {!isAppInstalled && (
             <button 
                 onClick={handleInstallClick}
-                className="text-blue-500 hover:text-blue-400 font-bold text-xs flex items-center gap-2 animate-pulse"
+                className="text-blue-500 hover:text-blue-400 font-bold text-xs flex items-center gap-2 animate-pulse whitespace-nowrap"
             >
                 <i className="fas fa-download"></i> INSTALL APP
             </button>
         )}
-        <button onClick={() => navigate('/admin')} className="text-slate-800 hover:text-slate-500 text-xs">Admin Access</button>
+        <button onClick={() => navigate('/admin')} className="text-slate-800 hover:text-slate-500 text-xs whitespace-nowrap">Admin Access</button>
       </footer>
     </div>
   );
