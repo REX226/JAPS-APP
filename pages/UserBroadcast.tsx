@@ -485,12 +485,6 @@ export const UserBroadcast: React.FC = () => {
              
              {audioEnabled ? (
                  <>
-                   {/* Check 'isSilentPlaying' state instead of ref to prevent false positives during React render cycle */}
-                   {!isSilentPlaying && (
-                       <div className="mt-4 p-3 bg-yellow-900/30 text-yellow-500 border border-yellow-800 rounded text-sm animate-pulse cursor-pointer" onClick={() => enableAudio(false)}>
-                          <i className="fas fa-exclamation-circle mr-2"></i> Audio suspended. Tap to fix.
-                       </div>
-                   )}
                    <div className="mt-2 text-green-500 text-xs font-mono animate-pulse">
                        <i className="fas fa-satellite-dish"></i> Background Signal Active
                    </div>
