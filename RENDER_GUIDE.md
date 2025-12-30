@@ -22,7 +22,7 @@ Since Vercel only hosts the visual app, you need a separate server to run the `m
    - **Start Command:** `node monitor-local.js`
    - **Instance Type:** Free
 
-## Step 3: Configure Variables
+## Step 3: Configure Variables (CRITICAL)
 Scroll down to **Environment Variables** and add:
 
 1. **Key:** `FIREBASE_SERVICE_ACCOUNT`
@@ -46,7 +46,20 @@ Render Free Tier sleeps after 15 minutes. To prevent this:
 5. **Schedule:** Every 5 minutes.
 6. **Save.**
 
-## Step 5: Verify
-1. Open your Vercel App.
-2. Go to **Admin Dashboard** -> **Settings**.
-3. The Monitor Status should be **ONLINE**.
+## 🚨 Troubleshooting "Key file not found"
+
+If you see the error: `ERROR: Key file not found!`, do this:
+
+1. **Push your code!**
+   You might be deploying an old version. Run:
+   ```bash
+   git add .
+   git commit -m "Update monitor script"
+   git push
+   ```
+   Then go to Render and click **Manual Deploy** > **Deploy latest commit**.
+
+2. **Check the Variable**
+   - Go to Render Dashboard > Sentinel Monitor > Environment.
+   - Ensure the key is exactly `FIREBASE_SERVICE_ACCOUNT`.
+   - Ensure the value starts with `{` and ends with `}`.
