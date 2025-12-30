@@ -190,20 +190,31 @@ async function sendNotifications(alertData) {
 
     if (tokens.length === 0) return;
 
-    // 💡 STRATEGY: High Priority Data Message
-    // This wakes up Android devices even in Doze mode or if App is killed.
+    // 💡 STRATEGY: High Priority Notification Message
+    // By including the 'notification' key at the top level, we force the Android OS
+    // to display the alert even if the browser process is completely killed.
     const payload = {
-        data: {
+        notification: {
             title: `🚨 ${alertData.severity} ALERT`,
             body: `${alertData.content}`,
+        },
+        data: {
             alertId: alertData.id,
             severity: alertData.severity,
             forceAlarm: "true",
-            timestamp: Date.now().toString()
+            timestamp: Date.now().toString(),
+            url: "https://japs-parivar-siren.web.app/?emergency=true"
         },
         android: {
             priority: "high", // Critical for waking up Doze mode
-            ttl: 0 
+            ttl: 0,
+            notification: {
+                sound: "default", // Plays the system notification sound
+                priority: "max",  // Heads up notification
+                channelId: "sentinel_channel", // Important for Android 8+
+                visibility: "public",
+                clickAction: "FLUTTER_NOTIFICATION_CLICK" // Standard compat handling
+            }
         },
         webpush: {
             headers: { 
@@ -220,7 +231,7 @@ async function sendNotifications(alertData) {
             tokens: tokens,
             ...payload
         });
-        console.log(`🚀 Sent to ${response.successCount} devices (App Closed/Background).`);
+        console.log(`🚀 Sent to ${response.successCount} devices (OS Priority Mode).`);
     } catch (e) {
         console.error("🔥 Error sending:", e);
     }
