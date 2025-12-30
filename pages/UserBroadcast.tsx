@@ -11,6 +11,9 @@ import { initializePushNotifications, checkFirebaseConfig } from '../services/fi
 // Tiny silent MP3 to keep the audio channel open and background execution alive
 const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV6urq6urq6urq6urq6urq6urq6urq6urq6v////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAASAAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA";
 
+// Alarm Beep Sound (HTML5 Audio source) - Replaces Oscillator for background reliability
+const ALARM_MP3 = "data:audio/mp3;base64,//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+
 export const UserBroadcast: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -24,6 +27,7 @@ export const UserBroadcast: React.FC = () => {
   // Install State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
 
   // Status State
   const [isAlarmActive, setIsAlarmActive] = useState(false);
@@ -38,8 +42,8 @@ export const UserBroadcast: React.FC = () => {
   const [pushPermission, setPushPermission] = useState<string>('default');
   
   // Refs
-  const audioCtxRef = useRef<AudioContext | null>(null);
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const alarmAudioRef = useRef<HTMLAudioElement | null>(null);
   const vibrationIntervalRef = useRef<any>(null);
   const workerRef = useRef<Worker | null>(null);
   const fetchAlertsRef = useRef<() => void>(() => {});
@@ -59,6 +63,9 @@ export const UserBroadcast: React.FC = () => {
     checkStandalone();
     window.matchMedia('(display-mode: standalone)').addEventListener('change', checkStandalone);
     
+    // Check OS
+    setIsIOS(/iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream);
+
     const isConf = checkFirebaseConfig();
     setFirebaseConfigured(isConf);
 
@@ -117,8 +124,9 @@ export const UserBroadcast: React.FC = () => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && audioEnabled) {
         requestWakeLock();
-        if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
-            audioCtxRef.current.resume();
+        // Ensure silent loop is playing
+        if (silentAudioRef.current && silentAudioRef.current.paused) {
+            silentAudioRef.current.play().catch(() => {});
         }
       }
     };
@@ -127,17 +135,7 @@ export const UserBroadcast: React.FC = () => {
   }, [audioEnabled]);
 
   const enableAudio = (isAutoResume = false) => {
-    // 1. Audio Context
-    if (!audioCtxRef.current) {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      audioCtxRef.current = new AudioContext();
-    }
-    const ctx = audioCtxRef.current;
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => console.log("Auto-resume waiting for gesture"));
-    }
-
-    // 2. Silent Loop
+    // 1. Silent Loop for Background persistence
     if (silentAudioRef.current) {
         const playPromise = silentAudioRef.current.play();
         if (playPromise !== undefined) {
@@ -162,22 +160,19 @@ export const UserBroadcast: React.FC = () => {
     requestNotificationPermission();
     requestWakeLock();
     
-    // Play loud beep to confirm activation
-    if (!isAutoResume) {
+    // Play short confirmation beep via the alarm audio element
+    if (!isAutoResume && alarmAudioRef.current) {
         try {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            // Confirmation Sound: High Pitch chirp
-            osc.frequency.setValueAtTime(1000, ctx.currentTime);
-            osc.frequency.exponentialRampToValueAtTime(2000, ctx.currentTime + 0.1);
-            gain.gain.setValueAtTime(0.3, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.3);
-            osc.start();
-            osc.stop(ctx.currentTime + 0.3);
+            alarmAudioRef.current.currentTime = 0;
+            alarmAudioRef.current.play().catch(e => console.error("Confirmation beep failed", e));
+            setTimeout(() => {
+                if (alarmAudioRef.current) {
+                    alarmAudioRef.current.pause();
+                    alarmAudioRef.current.currentTime = 0;
+                }
+            }, 500);
             
-            // If opened via emergency, start the siren immediately
+            // If opened via emergency, start the full siren immediately
             if (searchParams.get('emergency') === 'true' || isEmergencyMode) {
                playSiren();
             }
@@ -193,8 +188,11 @@ export const UserBroadcast: React.FC = () => {
     if (wakeLock) {
         wakeLock.release().then(() => setWakeLock(null));
     }
-    if (audioCtxRef.current) audioCtxRef.current.suspend();
     if (silentAudioRef.current) silentAudioRef.current.pause();
+    if (alarmAudioRef.current) {
+        alarmAudioRef.current.pause();
+        alarmAudioRef.current.currentTime = 0;
+    }
   };
 
   const stopVibration = () => {
@@ -207,7 +205,16 @@ export const UserBroadcast: React.FC = () => {
 
   const playSiren = useCallback(() => {
     setIsAlarmActive(true);
-    setTimeout(() => { setIsAlarmActive(false); stopVibration(); }, 15000);
+    
+    // Auto stop after 15 seconds
+    setTimeout(() => { 
+        setIsAlarmActive(false); 
+        stopVibration(); 
+        if (alarmAudioRef.current) {
+            alarmAudioRef.current.pause();
+            alarmAudioRef.current.currentTime = 0;
+        }
+    }, 15000);
 
     // Vibration
     if (navigator.vibrate) {
@@ -218,30 +225,13 @@ export const UserBroadcast: React.FC = () => {
         }, 3000);
     }
 
-    // Audio
-    if (!audioCtxRef.current) return;
-    const ctx = audioCtxRef.current;
-    if (ctx.state === 'suspended') ctx.resume();
-
-    try {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.type = 'sawtooth';
-      
-      const now = ctx.currentTime;
-      for(let i=0; i < 15; i++) {
-          const t = now + i;
-          osc.frequency.setValueAtTime(600, t);
-          osc.frequency.linearRampToValueAtTime(1200, t + 0.5);
-          osc.frequency.linearRampToValueAtTime(600, t + 1.0);
-      }
-      gain.gain.setValueAtTime(0.5, now);
-      gain.gain.linearRampToValueAtTime(0.001, now + 15);
-      osc.start(now);
-      osc.stop(now + 15);
-    } catch (e) { console.error(e); }
+    // Audio - Using HTML5 Audio Element for background capability
+    if (alarmAudioRef.current) {
+        alarmAudioRef.current.currentTime = 0;
+        // Playing an <audio> element that was initialized during 'enableAudio' (via user gesture)
+        // should play even in background if the silent loop kept the session active.
+        alarmAudioRef.current.play().catch(e => console.error("Siren play failed", e));
+    }
   }, [audioEnabled]);
 
   // --- POLLING & WORKER ---
@@ -319,12 +309,11 @@ export const UserBroadcast: React.FC = () => {
         if (res.outcome === 'accepted') setDeferredPrompt(null);
       });
     } else {
-      // Manual Instructions for iOS or when prompt is not available
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+      // Manual Instructions
       if (isIOS) {
-          alert("📲 To Install on iPhone:\n\n1. Tap the 'Share' button at the bottom of Safari.\n2. Scroll down and tap 'Add to Home Screen'.");
+          alert("📲 INSTALL ON iPHONE:\n\n1. Tap the 'Share' button (Box with arrow) at the bottom of Safari.\n\n2. Scroll down and tap 'Add to Home Screen' (+).");
       } else {
-          alert("📲 To Install:\n\nTap the browser menu (three dots ⋮) and select 'Install App' or 'Add to Home Screen'.");
+          alert("📲 INSTALL ON ANDROID:\n\n1. Tap the browser menu (three dots ⋮) at the top right.\n\n2. Select 'Install App' or 'Add to Home Screen'.");
       }
     }
   };
@@ -332,6 +321,8 @@ export const UserBroadcast: React.FC = () => {
   return (
     <div className={`min-h-screen text-white flex flex-col transition-colors duration-500 ${isAlarmActive ? 'alarm-flash' : 'bg-slate-900'}`}>
       <audio ref={silentAudioRef} src={SILENT_MP3} loop playsInline style={{ display: 'none' }} />
+      {/* Alarm Audio - Not displayed, used for playback */}
+      <audio ref={alarmAudioRef} src={ALARM_MP3} playsInline style={{ display: 'none' }} />
 
       {/* EMERGENCY FULLSCREEN OVERLAY */}
       {isEmergencyMode && (
@@ -374,18 +365,6 @@ export const UserBroadcast: React.FC = () => {
           
           {/* RIGHT: Actions - Prevent shrinking */}
           <div className="flex gap-2 items-center flex-shrink-0">
-            
-            {/* INSTALL BUTTON - Icon Only, No Animation */}
-            {!isAppInstalled && (
-                <button 
-                  onClick={handleInstallClick}
-                  className="bg-blue-600 hover:bg-blue-500 text-white w-10 h-10 rounded-full flex items-center justify-center shadow-lg shadow-blue-900/50 border border-blue-400"
-                  title="Download / Install App"
-                >
-                  <i className="fas fa-download"></i>
-                </button>
-            )}
-
             {!audioEnabled ? (
               <Button onClick={() => enableAudio(false)} variant="danger" className="animate-bounce font-bold shadow-lg shadow-red-900/50 text-sm px-3 md:px-4 h-10">
                 ACTIVATE
@@ -413,27 +392,27 @@ export const UserBroadcast: React.FC = () => {
 
       {/* MAIN CONTENT */}
       <main className="flex-1 max-w-4xl mx-auto w-full p-4 md:p-8 mb-16">
+        
         {alerts.length === 0 ? (
            <div className="flex flex-col items-center justify-center h-64 text-slate-500">
              <i className="fas fa-shield-alt text-6xl mb-4 opacity-20"></i>
              <p className="text-xl">Monitoring Active</p>
              
-             {audioEnabled && (audioCtxRef.current?.state === 'suspended') && (
-                 <div className="mt-4 p-3 bg-yellow-900/30 text-yellow-500 border border-yellow-800 rounded text-sm animate-pulse cursor-pointer" onClick={() => enableAudio(false)}>
-                    <i className="fas fa-exclamation-circle mr-2"></i> Audio suspended. Tap to fix.
+             {audioEnabled ? (
+                 <>
+                   {silentAudioRef.current?.paused && (
+                       <div className="mt-4 p-3 bg-yellow-900/30 text-yellow-500 border border-yellow-800 rounded text-sm animate-pulse cursor-pointer" onClick={() => enableAudio(false)}>
+                          <i className="fas fa-exclamation-circle mr-2"></i> Audio suspended. Tap to fix.
+                       </div>
+                   )}
+                   <div className="mt-2 text-green-500 text-xs font-mono animate-pulse">
+                       <i className="fas fa-satellite-dish"></i> Background Signal Active
+                   </div>
+                 </>
+             ) : (
+                 <div className="mt-2 text-slate-600 text-xs font-mono">
+                     <i className="fas fa-volume-mute"></i> System Disarmed
                  </div>
-             )}
-             
-             {/* Fallback Install Button in Main Area for Visibility */}
-             {!isAppInstalled && (
-               <div className="mt-6">
-                 <button 
-                    onClick={handleInstallClick}
-                    className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 px-4 py-2 rounded-full text-sm font-medium transition-colors"
-                  >
-                   <i className="fas fa-download"></i> Install App
-                 </button>
-               </div>
              )}
 
              {/* INSTRUCTIONS */}
@@ -442,8 +421,9 @@ export const UserBroadcast: React.FC = () => {
                     <p className="font-bold text-slate-400 mb-2"><i className="fas fa-lightbulb text-yellow-500"></i> BEST PRACTICES</p>
                     <ul className="space-y-2 text-slate-500 list-disc pl-4">
                         <li>Turn Volume <strong>MAX</strong>.</li>
-                        <li>Keep screen <strong>OPEN</strong> for continuous siren.</li>
-                        <li className="text-blue-300">Tap "Activate" to ensure sound works.</li>
+                        <li className="text-green-400">✅ Screen can be <strong>LOCKED</strong> (Off).</li>
+                        <li className="text-red-400">❌ Do <strong>NOT</strong> swipe-close the app.</li>
+                        <li className="text-blue-300">Tap "Activate" to start background mode.</li>
                     </ul>
                 </div>
              </div>
@@ -461,8 +441,16 @@ export const UserBroadcast: React.FC = () => {
         )}
       </main>
       
-      <footer className="bg-slate-950 p-6 text-center text-slate-600 text-xs border-t border-slate-900">
-        <button onClick={() => navigate('/admin')} className="text-slate-800 hover:text-slate-500">Admin Access</button>
+      <footer className="bg-slate-950 p-6 border-t border-slate-900 flex flex-col md:flex-row justify-center items-center gap-6">
+        {!isAppInstalled && (
+            <button 
+                onClick={handleInstallClick}
+                className="text-blue-500 hover:text-blue-400 font-bold text-xs flex items-center gap-2 animate-pulse"
+            >
+                <i className="fas fa-download"></i> INSTALL APP
+            </button>
+        )}
+        <button onClick={() => navigate('/admin')} className="text-slate-800 hover:text-slate-500 text-xs">Admin Access</button>
       </footer>
     </div>
   );
