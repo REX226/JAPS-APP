@@ -190,9 +190,9 @@ async function sendNotifications(alertData) {
 
     if (tokens.length === 0) return;
 
-    // 💡 STRATEGY: High Priority Notification Message
-    // By including the 'notification' key at the top level, we force the Android OS
-    // to display the alert even if the browser process is completely killed.
+    // 💡 STRATEGY: High Priority Notification Message + OS Level Vibration
+    // By including specific 'vibrateTimings', the Android OS handles the vibration
+    // even if the app's JS code is completely dead.
     const payload = {
         notification: {
             title: `🚨 ${alertData.severity} ALERT`,
@@ -209,11 +209,23 @@ async function sendNotifications(alertData) {
             priority: "high", // Critical for waking up Doze mode
             ttl: 0,
             notification: {
-                sound: "default", // Plays the system notification sound
+                sound: "default", 
                 priority: "max",  // Heads up notification
-                channelId: "sentinel_channel", // Important for Android 8+
+                channelId: "sentinel_channel", 
                 visibility: "public",
-                clickAction: "FLUTTER_NOTIFICATION_CLICK" // Standard compat handling
+                clickAction: "FLUTTER_NOTIFICATION_CLICK",
+                // 🔊 OS-LEVEL VIBRATION (Works when app is killed)
+                // Format: duration in seconds as strings [wait, vibrate, wait, vibrate...]
+                vibrateTimings: [
+                    "0.0s", "0.2s", "0.1s", "0.2s", "0.1s", "0.2s", // Fast burst
+                    "0.5s", "1.0s", "0.5s", "1.0s"                  // Long siren
+                ],
+                // 🔦 OS-LEVEL LED FLASH (Works if device has LED)
+                lightSettings: {
+                    color: { red: 255, green: 0, blue: 0, alpha: 1 },
+                    lightOnDuration: "0.5s",
+                    lightOffDuration: "0.5s"
+                }
             }
         },
         webpush: {
