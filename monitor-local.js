@@ -190,15 +190,15 @@ async function sendNotifications(alertData) {
 
     if (tokens.length === 0) return;
 
-    // 💡 STRATEGY: High Priority Notification Message + OS Level Vibration
-    // By including specific 'vibrateTimings', the Android OS handles the vibration
-    // even if the app's JS code is completely dead.
+    // 💡 STRATEGY: Data-Only Payload with High Priority
+    // We REMOVE the 'notification' key. This forces the message to be handled
+    // by the Service Worker's 'onBackgroundMessage' handler, which contains
+    // the custom logic for vibration patterns and sirens.
+    // If we included 'notification', the OS would take over and ignore our JS code.
     const payload = {
-        notification: {
+        data: {
             title: `🚨 ${alertData.severity} ALERT`,
             body: `${alertData.content}`,
-        },
-        data: {
             alertId: alertData.id,
             severity: alertData.severity,
             forceAlarm: "true",
@@ -208,25 +208,6 @@ async function sendNotifications(alertData) {
         android: {
             priority: "high", // Critical for waking up Doze mode
             ttl: 0,
-            notification: {
-                sound: "default", 
-                priority: "max",  // Heads up notification
-                channelId: "sentinel_channel", 
-                visibility: "public",
-                clickAction: "FLUTTER_NOTIFICATION_CLICK",
-                // 🔊 OS-LEVEL VIBRATION (Works when app is killed)
-                // Format: duration in seconds as strings [wait, vibrate, wait, vibrate...]
-                vibrateTimings: [
-                    "0.0s", "0.2s", "0.1s", "0.2s", "0.1s", "0.2s", // Fast burst
-                    "0.5s", "1.0s", "0.5s", "1.0s"                  // Long siren
-                ],
-                // 🔦 OS-LEVEL LED FLASH (Works if device has LED)
-                lightSettings: {
-                    color: { red: 255, green: 0, blue: 0, alpha: 1 },
-                    lightOnDuration: "0.5s",
-                    lightOffDuration: "0.5s"
-                }
-            }
         },
         webpush: {
             headers: { 
@@ -243,7 +224,7 @@ async function sendNotifications(alertData) {
             tokens: tokens,
             ...payload
         });
-        console.log(`🚀 Sent to ${response.successCount} devices (OS Priority Mode).`);
+        console.log(`🚀 Sent to ${response.successCount} devices (SW Data Mode).`);
     } catch (e) {
         console.error("🔥 Error sending:", e);
     }

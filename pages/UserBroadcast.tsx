@@ -24,6 +24,7 @@ export const UserBroadcast: React.FC = () => {
   
   // Install State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallPopup, setShowInstallPopup] = useState(false);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
 
@@ -374,9 +375,10 @@ export const UserBroadcast: React.FC = () => {
     const handler = (e: any) => { 
         e.preventDefault(); 
         setDeferredPrompt(e); 
+        setShowInstallPopup(true); // Show popup when ready
     };
     window.addEventListener('beforeinstallprompt', handler);
-    window.addEventListener('appinstalled', () => { setIsAppInstalled(true); setDeferredPrompt(null); });
+    window.addEventListener('appinstalled', () => { setIsAppInstalled(true); setDeferredPrompt(null); setShowInstallPopup(false); });
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
@@ -384,7 +386,10 @@ export const UserBroadcast: React.FC = () => {
     if (deferredPrompt) {
       deferredPrompt.prompt();
       deferredPrompt.userChoice.then((res: any) => {
-        if (res.outcome === 'accepted') setDeferredPrompt(null);
+        if (res.outcome === 'accepted') {
+            setDeferredPrompt(null);
+            setShowInstallPopup(false);
+        }
       });
     } else {
       // Manual Instructions
@@ -409,6 +414,27 @@ export const UserBroadcast: React.FC = () => {
         onPause={() => setIsSilentPlaying(false)}
       />
 
+      {/* INSTALL POPUP (FIXED BOTTOM) */}
+      {showInstallPopup && !isAppInstalled && (
+         <div className="fixed bottom-4 left-4 right-4 z-[999] bg-slate-800 border border-slate-600 shadow-2xl rounded-lg p-4 flex flex-col gap-3 animate-bounce">
+             <div className="flex justify-between items-start">
+                 <div className="flex items-center gap-3">
+                     <div className="bg-blue-600 w-10 h-10 rounded-lg flex items-center justify-center">
+                        <i className="fas fa-download text-white"></i>
+                     </div>
+                     <div>
+                         <h3 className="font-bold text-white text-base">Install App</h3>
+                         <p className="text-xs text-slate-400">Get offline access & full screen.</p>
+                     </div>
+                 </div>
+                 <button onClick={() => setShowInstallPopup(false)} className="text-slate-400 hover:text-white p-1">
+                     <i className="fas fa-times"></i>
+                 </button>
+             </div>
+             <Button onClick={handleInstallClick} fullWidth variant="primary">Install Now</Button>
+         </div>
+      )}
+
       {/* EMERGENCY FULLSCREEN OVERLAY */}
       {isEmergencyMode && (
           <div 
@@ -425,23 +451,12 @@ export const UserBroadcast: React.FC = () => {
       <header className="bg-slate-800 border-b border-slate-700 p-3 sticky top-0 z-50 shadow-md">
         <div className="max-w-4xl mx-auto flex flex-row justify-between items-center gap-2">
           
-          {/* LEFT: Identity - Using flex-1 and min-w-0 to allow shrinking */}
+          {/* LEFT: Identity */}
           <div className="flex items-center gap-3 overflow-hidden flex-1 min-w-0">
             
-            {/* LOGO REPLACEMENT: Show Install Button if not installed, otherwise show logo */}
-            {(!isAppInstalled || deferredPrompt) ? (
-              <button 
-                onClick={handleInstallClick}
-                className="w-10 h-10 flex-shrink-0 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center shadow-lg shadow-blue-900/50 animate-pulse text-white transition-all transform hover:scale-110"
-                title="Install App"
-              >
-                <i className="fas fa-download text-lg"></i>
-              </button>
-            ) : (
-              <div className={`w-10 h-10 flex-shrink-0 bg-red-600 rounded-full flex items-center justify-center shadow-lg shadow-red-900/50 ${isAlarmActive ? 'animate-spin' : 'animate-pulse'}`}>
+            <div className={`w-10 h-10 flex-shrink-0 bg-red-600 rounded-full flex items-center justify-center shadow-lg shadow-red-900/50 ${isAlarmActive ? 'animate-spin' : 'animate-pulse'}`}>
                 <i className="fas fa-bullhorn text-white text-lg md:text-xl"></i>
-              </div>
-            )}
+            </div>
 
             <div className="flex flex-col min-w-0">
               <h1 className="text-lg md:text-xl font-bold tracking-wider text-red-500 leading-tight truncate">SENTINEL</h1>
@@ -461,9 +476,8 @@ export const UserBroadcast: React.FC = () => {
             </div>
           </div>
           
-          {/* RIGHT: Actions - Prevent shrinking */}
+          {/* RIGHT: Actions */}
           <div className="flex gap-2 items-center flex-shrink-0">
-            {/* Install Button REMOVED from here */}
             {!audioEnabled ? (
               <Button onClick={() => enableAudio(false)} variant="danger" className="animate-bounce font-bold shadow-lg shadow-red-900/50 text-sm px-3 md:px-4 h-10">
                 ACTIVATE
