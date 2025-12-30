@@ -37,6 +37,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState<'create' | 'recurring' | 'scheduled' | 'history' | 'settings'>('create');
   
+  // Mobile Nav State
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  
   // Settings State
   const [dbUrl, setDbUrl] = useState(getBackendUrl());
   const [isCloud, setIsCloud] = useState(isCloudEnabled());
@@ -166,19 +169,43 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
+  const handleTabChange = (tab: any) => {
+      setActiveTab(tab);
+      setIsMobileMenuOpen(false); // Close menu on selection
+  };
+
   // Validation helper
   const isUrlSuspicious = dbUrl && !dbUrl.includes('.firebaseio.com') && !dbUrl.includes('.firebasedatabase.app');
   const isUrlTypo = dbUrl && (dbUrl.endsWith('.co') || dbUrl.endsWith('.c'));
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col md:flex-row">
-      {/* Sidebar */}
-      <aside className="w-full md:w-64 bg-slate-800 border-r border-slate-700 flex flex-col">
-        <div className="p-6 border-b border-slate-700">
+      
+      {/* MOBILE HEADER */}
+      <div className="md:hidden bg-slate-800 p-4 flex justify-between items-center border-b border-slate-700 sticky top-0 z-50 shadow-lg">
+         <div className="flex items-center gap-2">
+            <i className="fas fa-shield-alt text-blue-500"></i>
+            <h2 className="text-xl font-bold font-oswald text-white">ADMIN</h2>
+         </div>
+         <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-white p-2 focus:outline-none">
+           <i className={`fas ${isMobileMenuOpen ? 'fa-times' : 'fa-bars'} text-2xl`}></i>
+         </button>
+      </div>
+
+      {/* SIDEBAR NAVIGATION (Responsive) */}
+      <aside className={`
+          fixed inset-0 z-40 bg-slate-900/95 backdrop-blur-md transform transition-transform duration-300 ease-in-out
+          md:relative md:translate-x-0 md:w-64 md:flex md:flex-col md:bg-slate-800 md:border-r md:border-slate-700
+          ${isMobileMenuOpen ? 'translate-x-0 flex flex-col pt-20 px-6' : '-translate-x-full hidden'}
+      `}>
+        <div className="hidden md:block p-6 border-b border-slate-700">
            <h2 className="text-2xl font-bold font-oswald text-blue-400">ADMIN PANEL</h2>
            <p className="text-xs text-slate-500 mt-1">SENTINEL CONTROL</p>
-           
-           <div className="mt-4 bg-slate-900 p-3 rounded border border-slate-700 space-y-2">
+        </div>
+        
+        {/* Connection Status Widget (Visible in menu) */}
+        <div className="md:px-6 md:pt-4 mb-4 mt-4 md:mt-0">
+           <div className="bg-slate-950/50 p-3 rounded border border-slate-700 space-y-2">
                {!isCloud ? (
                  <div className="flex items-center gap-2 text-xs text-yellow-500">
                     <i className="fas fa-exclamation-triangle"></i> Local Mode
@@ -191,7 +218,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
 
                {isCloud && (
                    <div 
-                      onClick={() => setActiveTab('settings')}
+                      onClick={() => handleTabChange('settings')}
                       className={`flex items-center gap-2 text-xs font-bold cursor-pointer hover:opacity-80 transition-opacity ${
                        monitorStatus === 'online' ? 'text-green-400' : 
                        monitorStatus === 'checking' ? 'text-yellow-400' : 'text-red-500'
@@ -200,48 +227,34 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                           monitorStatus === 'online' ? 'bg-green-500 animate-pulse' : 
                           monitorStatus === 'checking' ? 'bg-yellow-500' : 'bg-red-500'
                       }`}></span>
-                      {monitorStatus === 'online' ? 'Monitor: ONLINE' : monitorStatus === 'checking' ? 'Monitor: CHECKING...' : 'Monitor: OFFLINE'}
-                   </div>
-               )}
-               {isCloud && monitorStatus === 'offline' && (
-                   <div className="text-[10px] text-red-400 leading-tight mt-1 border-t border-slate-700 pt-1">
-                       <i className="fas fa-arrow-up mr-1"></i>
-                       Click above to fix connection
+                      {monitorStatus === 'online' ? 'Monitor: ONLINE' : monitorStatus === 'checking' ? 'Checking...' : 'Monitor: OFFLINE'}
                    </div>
                )}
            </div>
         </div>
         
-        <nav className="flex-1 p-4 space-y-2">
-          <button onClick={() => setActiveTab('create')} className={`w-full text-left px-4 py-3 rounded transition-colors ${activeTab === 'create' ? 'bg-blue-600' : 'text-slate-400 hover:bg-slate-700'}`}>
-            <i className="fas fa-plus-circle mr-3"></i> One-Time Alert
-          </button>
-          <button onClick={() => setActiveTab('recurring')} className={`w-full text-left px-4 py-3 rounded transition-colors ${activeTab === 'recurring' ? 'bg-blue-600' : 'text-slate-400 hover:bg-slate-700'}`}>
-            <i className="fas fa-sync-alt mr-3"></i> Recurring Alerts
-          </button>
-          <button onClick={() => setActiveTab('scheduled')} className={`w-full text-left px-4 py-3 rounded transition-colors ${activeTab === 'scheduled' ? 'bg-blue-600' : 'text-slate-400 hover:bg-slate-700'}`}>
-            <i className="fas fa-clock mr-3"></i> Scheduled
-            {scheduledAlerts.length > 0 && <span className="ml-auto bg-slate-900 px-2 py-0.5 rounded-full text-xs float-right">{scheduledAlerts.length}</span>}
-          </button>
-          <button onClick={() => setActiveTab('history')} className={`w-full text-left px-4 py-3 rounded transition-colors ${activeTab === 'history' ? 'bg-blue-600' : 'text-slate-400 hover:bg-slate-700'}`}>
-            <i className="fas fa-history mr-3"></i> History
-          </button>
-          <button onClick={() => setActiveTab('settings')} className={`w-full text-left px-4 py-3 rounded transition-colors ${activeTab === 'settings' ? 'bg-blue-600' : 'text-slate-400 hover:bg-slate-700'}`}>
-            <i className="fas fa-cog mr-3"></i> Settings & Keys
-          </button>
+        <nav className="flex-1 md:p-4 space-y-2">
+          <NavButton active={activeTab === 'create'} onClick={() => handleTabChange('create')} icon="fa-plus-circle" label="One-Time Alert" />
+          <NavButton active={activeTab === 'recurring'} onClick={() => handleTabChange('recurring')} icon="fa-sync-alt" label="Recurring Alerts" />
+          <NavButton active={activeTab === 'scheduled'} onClick={() => handleTabChange('scheduled')} icon="fa-clock" label="Scheduled" count={scheduledAlerts.length} />
+          <NavButton active={activeTab === 'history'} onClick={() => handleTabChange('history')} icon="fa-history" label="History" />
+          <NavButton active={activeTab === 'settings'} onClick={() => handleTabChange('settings')} icon="fa-cog" label="Settings & Keys" />
         </nav>
 
-        <div className="p-4 border-t border-slate-700">
+        <div className="p-4 border-t border-slate-700 mt-auto">
            <Button variant="outline" fullWidth onClick={handleLogout}>Logout</Button>
         </div>
       </aside>
 
-      <main className="flex-1 p-6 overflow-y-auto">
+      {/* MAIN CONTENT AREA */}
+      <main className="flex-1 p-4 md:p-6 overflow-y-auto">
         {/* CREATE ONE-TIME */}
         {activeTab === 'create' && (
           <div className="max-w-2xl mx-auto">
-            <h2 className="text-3xl font-bold mb-6 font-oswald">One-Time Broadcast</h2>
-            <form onSubmit={handleCreate} className="space-y-6 bg-slate-800 p-8 rounded-lg shadow-xl border border-slate-700">
+            <h2 className="text-2xl md:text-3xl font-bold mb-6 font-oswald flex items-center gap-3">
+                <i className="fas fa-bullhorn text-blue-500"></i> One-Time Broadcast
+            </h2>
+            <form onSubmit={handleCreate} className="space-y-6 bg-slate-800 p-6 md:p-8 rounded-lg shadow-xl border border-slate-700">
               <FormFields 
                 severity={severity} setSeverity={setSeverity}
                 timeInput={timeInput} setTimeInput={setTimeInput}
@@ -262,8 +275,8 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           <div className="max-w-4xl mx-auto">
              <div className="grid md:grid-cols-2 gap-8">
                <div>
-                  <h2 className="text-3xl font-bold mb-6 font-oswald text-purple-400">Recurring Rule</h2>
-                  <form onSubmit={handleCreateRecurring} className="space-y-6 bg-slate-800 p-8 rounded-lg shadow-xl border border-slate-700">
+                  <h2 className="text-2xl md:text-3xl font-bold mb-6 font-oswald text-purple-400">Recurring Rule</h2>
+                  <form onSubmit={handleCreateRecurring} className="space-y-6 bg-slate-800 p-6 md:p-8 rounded-lg shadow-xl border border-slate-700">
                     <FormFields 
                       severity={severity} setSeverity={setSeverity}
                       timeInput={timeInput} setTimeInput={setTimeInput}
@@ -306,7 +319,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         {/* Scheduled List */}
         {activeTab === 'scheduled' && (
           <div className="max-w-4xl mx-auto">
-            <h2 className="text-3xl font-bold mb-6 font-oswald text-blue-400">Scheduled Queue</h2>
+            <h2 className="text-2xl md:text-3xl font-bold mb-6 font-oswald text-blue-400">Scheduled Queue</h2>
             {scheduledAlerts.length === 0 ? <p className="text-slate-500 italic">No alerts scheduled.</p> : scheduledAlerts.map(alert => <AlertCard key={alert.id} alert={alert} isAdmin onDelete={handleDelete} />)}
           </div>
         )}
@@ -314,7 +327,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         {/* History List */}
         {activeTab === 'history' && (
           <div className="max-w-4xl mx-auto">
-            <h2 className="text-3xl font-bold mb-6 font-oswald text-slate-400">History</h2>
+            <h2 className="text-2xl md:text-3xl font-bold mb-6 font-oswald text-slate-400">History</h2>
             {sentHistory.length === 0 ? <p className="text-slate-500 italic">No history.</p> : sentHistory.map(alert => <div key={alert.id} className="opacity-75"><AlertCard alert={alert} isAdmin onDelete={alert.id.startsWith('recurring') ? undefined : handleDelete} /></div>)}
           </div>
         )}
@@ -322,11 +335,11 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         {/* Settings Tab */}
         {activeTab === 'settings' && (
           <div className="max-w-2xl mx-auto">
-             <h2 className="text-3xl font-bold mb-6 font-oswald text-slate-200">System Configuration</h2>
+             <h2 className="text-2xl md:text-3xl font-bold mb-6 font-oswald text-slate-200">System Configuration</h2>
              <div className="space-y-6">
                 
                 {/* 1. DATABASE CONNECTION */}
-                <div className="bg-slate-800 p-8 rounded-lg shadow-xl border border-slate-700">
+                <div className="bg-slate-800 p-6 md:p-8 rounded-lg shadow-xl border border-slate-700">
                     <h3 className="text-lg font-bold text-white mb-4">1. Database Connection</h3>
                     <div>
                         <label className="block text-sm font-medium text-slate-300 mb-2">Firebase Database URL</label>
@@ -348,17 +361,17 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                             </p>
                         )}
                     </div>
-                    <div className="flex justify-between items-center pt-4">
+                    <div className="flex flex-col md:flex-row justify-between items-center pt-4 gap-4">
                         <div className="flex items-center gap-2">
                             <div className={`w-3 h-3 rounded-full ${isCloud ? 'bg-green-500' : 'bg-red-500'}`}></div>
                             <span className="text-sm font-medium">{isCloud ? 'Cloud Connected' : 'Local Mode'}</span>
                         </div>
-                        <Button onClick={handleSaveSettings}>Save & Connect</Button>
+                        <Button onClick={handleSaveSettings} fullWidth className="md:w-auto">Save & Connect</Button>
                     </div>
                 </div>
 
                 {/* 2. SERVER MONITOR KEYS */}
-                <div className="bg-slate-800 p-8 rounded-lg shadow-xl border border-slate-700">
+                <div className="bg-slate-800 p-6 md:p-8 rounded-lg shadow-xl border border-slate-700">
                     <h3 className="text-lg font-bold text-white mb-4">2. Server Monitor</h3>
                     
                     <div className="mt-4 border-t border-slate-700 pt-4">
@@ -403,13 +416,20 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   );
 };
 
+const NavButton: React.FC<any> = ({ active, onClick, icon, label, count }) => (
+    <button onClick={onClick} className={`w-full text-left px-4 py-3 rounded transition-colors flex items-center justify-between ${active ? 'bg-blue-600' : 'text-slate-400 hover:bg-slate-700'}`}>
+      <span><i className={`fas ${icon} w-6`}></i> {label}</span>
+      {count > 0 && <span className="bg-slate-900 px-2 py-0.5 rounded-full text-xs font-bold">{count}</span>}
+    </button>
+);
+
 const FormFields: React.FC<any> = ({ severity, setSeverity, timeInput, setTimeInput, content, setContent, isGenerating, onGenerate }) => (
   <>
     <div>
       <label className="block text-sm font-medium text-slate-400 mb-2">Severity Level</label>
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-2 md:gap-4">
         {(Object.values(AlertSeverity) as AlertSeverity[]).map((sev) => (
-          <button key={sev} type="button" onClick={() => setSeverity(sev)} className={`py-3 rounded border-2 font-bold ${severity === sev ? sev === 'CRITICAL' ? 'border-red-500 bg-red-500/20 text-red-500' : sev === 'WARNING' ? 'border-yellow-500 bg-yellow-500/20 text-yellow-500' : 'border-blue-500 bg-blue-500/20 text-blue-500' : 'border-slate-600 text-slate-500'}`}>{sev}</button>
+          <button key={sev} type="button" onClick={() => setSeverity(sev)} className={`py-3 rounded border-2 font-bold text-xs md:text-sm ${severity === sev ? sev === 'CRITICAL' ? 'border-red-500 bg-red-500/20 text-red-500' : sev === 'WARNING' ? 'border-yellow-500 bg-yellow-500/20 text-yellow-500' : 'border-blue-500 bg-blue-500/20 text-blue-500' : 'border-slate-600 text-slate-500'}`}>{sev}</button>
         ))}
       </div>
     </div>

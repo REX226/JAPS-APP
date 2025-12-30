@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { AlertMessage, AlertSeverity } from '../types';
 
@@ -41,18 +42,18 @@ export const AlertCard: React.FC<AlertCardProps> = ({ alert, isAdmin, onDelete }
   };
 
   return (
-    <div className={`p-4 rounded-r-lg border-l-4 mb-3 relative flex items-start gap-4 shadow-lg backdrop-blur-sm ${severityColors[alert.severity]}`}>
-      <div className="text-2xl pt-1">
+    <div className={`p-3 md:p-4 rounded-r-lg border-l-4 mb-3 relative flex items-start gap-3 md:gap-4 shadow-lg backdrop-blur-sm ${severityColors[alert.severity]}`}>
+      <div className="text-xl md:text-2xl pt-1">
         <i className={`fas ${severityIcons[alert.severity]}`}></i>
       </div>
       <div className="flex-1">
         <div className="flex justify-between items-start">
-          <h3 className="font-bold text-lg uppercase tracking-wider">{alert.severity} ALERT</h3>
-          <span className="text-xs opacity-70 font-mono bg-black/30 px-2 py-1 rounded">
+          <h3 className="font-bold text-base md:text-lg uppercase tracking-wider">{alert.severity} ALERT</h3>
+          <span className="text-[10px] md:text-xs opacity-70 font-mono bg-black/30 px-2 py-1 rounded whitespace-nowrap ml-2">
             {formatTime(alert.scheduledTime)}
           </span>
         </div>
-        <p className="mt-2 text-lg font-medium leading-relaxed">{alert.content}</p>
+        <p className="mt-1 md:mt-2 text-base md:text-lg font-medium leading-relaxed">{alert.content}</p>
         
         {isAdmin && (
           <div className="mt-3 flex justify-end">
@@ -61,7 +62,7 @@ export const AlertCard: React.FC<AlertCardProps> = ({ alert, isAdmin, onDelete }
                   e.stopPropagation();
                   onDelete && onDelete(alert.id);
                 }}
-                className="text-xs text-red-400 hover:text-red-300 underline"
+                className="text-xs text-red-400 hover:text-red-300 underline p-2"
              >
                Recall/Delete
              </button>

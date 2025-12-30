@@ -346,23 +346,25 @@ export const UserBroadcast: React.FC = () => {
       )}
 
       {/* HEADER */}
-      <header className="bg-slate-800 border-b border-slate-700 p-4 sticky top-0 z-50 shadow-md">
-        <div className="max-w-4xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+      <header className="bg-slate-800 border-b border-slate-700 p-3 sticky top-0 z-50 shadow-md">
+        <div className="max-w-4xl mx-auto flex flex-row justify-between items-center gap-2">
+          
+          {/* LEFT: Identity */}
           <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 bg-red-600 rounded-full flex items-center justify-center ${isAlarmActive ? 'animate-spin' : 'animate-pulse'}`}>
-               <i className="fas fa-bullhorn text-white text-xl"></i>
+            <div className={`w-10 h-10 bg-red-600 rounded-full flex items-center justify-center shadow-lg shadow-red-900/50 ${isAlarmActive ? 'animate-spin' : 'animate-pulse'}`}>
+               <i className="fas fa-bullhorn text-white text-lg md:text-xl"></i>
             </div>
-            <div>
-              <h1 className="text-xl font-bold tracking-wider text-red-500">SENTINEL</h1>
+            <div className="flex flex-col">
+              <h1 className="text-lg md:text-xl font-bold tracking-wider text-red-500 leading-tight">SENTINEL</h1>
               
-              <div className="flex items-center gap-3 mt-1 text-[10px] font-mono">
-                 {isCloud ? <span className="text-green-400">● ONLINE</span> : <span className="text-red-500 animate-pulse">● NO CONNECTION</span>}
+              <div className="flex items-center gap-2 md:gap-3 text-[10px] md:text-xs font-mono">
+                 {isCloud ? <span className="text-green-400 font-bold">● ON</span> : <span className="text-red-500 font-bold animate-pulse">● OFF</span>}
                  
                  {audioEnabled && (
                     wakeLock ? (
-                        <span className="text-blue-400 flex items-center gap-1"><i className="fas fa-desktop"></i> SCREEN ON</span>
+                        <span className="text-blue-400 hidden md:inline"><i className="fas fa-desktop"></i> SCREEN ON</span>
                     ) : (
-                        <span className={`${wakeLockError ? 'text-red-400' : 'text-slate-500'} flex items-center gap-1`}><i className="fas fa-desktop"></i> {wakeLockError ? 'LOCK FAILED' : 'NORMAL'}</span>
+                        <span className={`${wakeLockError ? 'text-red-400' : 'text-slate-500'} hidden md:inline`}><i className="fas fa-desktop"></i> {wakeLockError ? 'LOCK FAIL' : 'NORMAL'}</span>
                     )
                  )}
                  <span className={`transition-opacity duration-200 ${showHeartbeat ? 'opacity-100 text-blue-400' : 'opacity-20 text-slate-500'}`}><i className="fas fa-heartbeat"></i></span>
@@ -370,12 +372,14 @@ export const UserBroadcast: React.FC = () => {
             </div>
           </div>
           
+          {/* RIGHT: Actions */}
           <div className="flex gap-2 items-center">
-            {/* INSTALL ICON BUTTON - ALWAYS VISIBLE IF NOT INSTALLED */}
+            
+            {/* INSTALL BUTTON - Icon Only, No Animation */}
             {!isAppInstalled && (
                 <button 
                   onClick={handleInstallClick}
-                  className="bg-blue-600 hover:bg-blue-500 text-white w-10 h-10 rounded-full flex items-center justify-center shadow-lg shadow-blue-900/50 animate-pulse mr-2 border border-blue-400"
+                  className="bg-blue-600 hover:bg-blue-500 text-white w-10 h-10 rounded-full flex items-center justify-center shadow-lg shadow-blue-900/50 border border-blue-400"
                   title="Download / Install App"
                 >
                   <i className="fas fa-download"></i>
@@ -383,15 +387,15 @@ export const UserBroadcast: React.FC = () => {
             )}
 
             {!audioEnabled ? (
-              <Button onClick={() => enableAudio(false)} variant="danger" className="animate-bounce font-bold shadow-lg shadow-red-900/50">
-                ACTIVATE SYSTEM
+              <Button onClick={() => enableAudio(false)} variant="danger" className="animate-bounce font-bold shadow-lg shadow-red-900/50 text-sm px-3 md:px-4 h-10">
+                ACTIVATE
               </Button>
             ) : (
               <div className="flex items-center gap-2">
-                  <div className="flex items-center text-green-400 text-sm font-mono bg-green-900/20 px-3 py-1 rounded border border-green-900 h-10">
+                  <div className="hidden md:flex items-center text-green-400 text-sm font-mono bg-green-900/20 px-3 py-1 rounded border border-green-900 h-10">
                     <i className="fas fa-satellite-dish mr-2 animate-pulse"></i> ARMED
                   </div>
-                  <Button onClick={deactivateSystem} variant="secondary" className="text-xs opacity-60 hover:opacity-100">
+                  <Button onClick={deactivateSystem} variant="secondary" className="text-xs opacity-60 hover:opacity-100 h-10">
                     STOP
                   </Button>
               </div>
@@ -402,8 +406,8 @@ export const UserBroadcast: React.FC = () => {
 
       {/* CONFIG WARNINGS */}
       {!isCloud && (
-         <div className="bg-red-600 text-white p-3 text-center text-sm font-bold animate-pulse">
-           ❌ NOT CONNECTED TO CLOUD. Alerts may not arrive. Refresh or check internet.
+         <div className="bg-red-600 text-white p-2 text-center text-xs md:text-sm font-bold animate-pulse">
+           ❌ OFFLINE MODE. Check internet.
          </div>
       )}
 
@@ -427,7 +431,7 @@ export const UserBroadcast: React.FC = () => {
                     <ul className="space-y-2 text-slate-500 list-disc pl-4">
                         <li>Turn Volume <strong>MAX</strong>.</li>
                         <li>Keep screen <strong>OPEN</strong> for continuous siren.</li>
-                        <li className="text-blue-300">Tap "Activate System" to ensure sound works.</li>
+                        <li className="text-blue-300">Tap "Activate" to ensure sound works.</li>
                     </ul>
                 </div>
              </div>
