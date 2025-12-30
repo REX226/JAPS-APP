@@ -11,9 +11,6 @@ import { initializePushNotifications, checkFirebaseConfig } from '../services/fi
 // Tiny silent MP3 to keep the audio channel open and background execution alive
 const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV6urq6urq6urq6urq6urq6urq6urq6urq6v////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAASAAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA";
 
-// Alarm Beep Sound (HTML5 Audio source) - Replaces Oscillator for background reliability
-const ALARM_MP3 = "data:audio/mp3;base64,//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
-
 export const UserBroadcast: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -44,10 +41,100 @@ export const UserBroadcast: React.FC = () => {
   
   // Refs
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
-  const alarmAudioRef = useRef<HTMLAudioElement | null>(null);
   const vibrationIntervalRef = useRef<any>(null);
   const workerRef = useRef<Worker | null>(null);
   const fetchAlertsRef = useRef<() => void>(() => {});
+
+  // Web Audio API Refs (Replaces Audio Element for Siren)
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const sirenOscRef = useRef<OscillatorNode | null>(null);
+  const sirenGainRef = useRef<GainNode | null>(null);
+  const lfoRef = useRef<OscillatorNode | null>(null);
+
+  // --- AUDIO HELPERS ---
+  const getAudioContext = () => {
+    if (!audioCtxRef.current) {
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        audioCtxRef.current = new AudioContext();
+    }
+    return audioCtxRef.current;
+  };
+
+  const playBeep = () => {
+      try {
+          const ctx = getAudioContext();
+          if(ctx.state === 'suspended') ctx.resume();
+          
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          
+          // High-pitched confirmation beep
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.1);
+          
+          gain.gain.setValueAtTime(0.1, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          
+          osc.start();
+          osc.stop(ctx.currentTime + 0.3);
+      } catch(e) { console.error("Beep Error:", e); }
+  };
+
+  const startSiren = () => {
+      stopSiren(); // Ensure no duplicates
+      try {
+          const ctx = getAudioContext();
+          if(ctx.state === 'suspended') ctx.resume();
+          
+          // Main Tone
+          const mainOsc = ctx.createOscillator();
+          const mainGain = ctx.createGain();
+          
+          mainOsc.type = 'sawtooth';
+          mainOsc.frequency.value = 600; // Base frequency
+          
+          // LFO for "Wailing" effect (Siren)
+          const lfo = ctx.createOscillator();
+          lfo.type = 'triangle';
+          lfo.frequency.value = 0.5; // Speed of wail (0.5Hz = 2s cycle)
+          
+          const lfoGain = ctx.createGain();
+          lfoGain.gain.value = 400; // Range of wail (+/- 400Hz)
+          
+          // Connections: LFO -> LFO Gain -> Main Osc Frequency
+          lfo.connect(lfoGain);
+          lfoGain.connect(mainOsc.frequency);
+          
+          // Main -> Output
+          mainOsc.connect(mainGain);
+          mainGain.connect(ctx.destination);
+          
+          mainGain.gain.setValueAtTime(0.3, ctx.currentTime); // Volume
+          
+          mainOsc.start();
+          lfo.start();
+          
+          sirenOscRef.current = mainOsc;
+          sirenGainRef.current = mainGain;
+          lfoRef.current = lfo;
+      } catch(e) { console.error("Siren Start Error:", e); }
+  };
+
+  const stopSiren = () => {
+      try {
+          if (sirenOscRef.current) { sirenOscRef.current.stop(); sirenOscRef.current.disconnect(); }
+          if (lfoRef.current) { lfoRef.current.stop(); lfoRef.current.disconnect(); }
+          if (sirenGainRef.current) sirenGainRef.current.disconnect();
+          
+          sirenOscRef.current = null;
+          lfoRef.current = null;
+          sirenGainRef.current = null;
+      } catch(e) { console.error("Siren Stop Error:", e); }
+  };
 
   // --- INITIALIZATION ---
   useEffect(() => {
@@ -88,6 +175,8 @@ export const UserBroadcast: React.FC = () => {
         console.log("Opened via Emergency Notification");
         setIsEmergencyMode(true);
     }
+    
+    return () => stopSiren(); // Cleanup on unmount
   }, []);
 
   const requestNotificationPermission = async () => {
@@ -165,23 +254,14 @@ export const UserBroadcast: React.FC = () => {
     requestNotificationPermission();
     requestWakeLock();
     
-    // Play short confirmation beep via the alarm audio element
-    if (!isAutoResume && alarmAudioRef.current) {
-        try {
-            alarmAudioRef.current.currentTime = 0;
-            alarmAudioRef.current.play().catch(e => console.error("Confirmation beep failed", e));
-            setTimeout(() => {
-                if (alarmAudioRef.current) {
-                    alarmAudioRef.current.pause();
-                    alarmAudioRef.current.currentTime = 0;
-                }
-            }, 500);
-            
-            // If opened via emergency, start the full siren immediately
-            if (searchParams.get('emergency') === 'true' || isEmergencyMode) {
-               playSiren();
-            }
-        } catch (e) { console.error(e); }
+    // Play short confirmation beep
+    if (!isAutoResume) {
+        playBeep();
+        
+        // If opened via emergency, start the full siren immediately
+        if (searchParams.get('emergency') === 'true' || isEmergencyMode) {
+           playSiren();
+        }
     }
   };
 
@@ -190,16 +270,13 @@ export const UserBroadcast: React.FC = () => {
     localStorage.removeItem('sentinel_armed');
     setIsAlarmActive(false);
     stopVibration();
+    stopSiren();
     if (wakeLock) {
         wakeLock.release().then(() => setWakeLock(null));
     }
     if (silentAudioRef.current) {
         silentAudioRef.current.pause();
         setIsSilentPlaying(false);
-    }
-    if (alarmAudioRef.current) {
-        alarmAudioRef.current.pause();
-        alarmAudioRef.current.currentTime = 0;
     }
   };
 
@@ -218,10 +295,7 @@ export const UserBroadcast: React.FC = () => {
     setTimeout(() => { 
         setIsAlarmActive(false); 
         stopVibration(); 
-        if (alarmAudioRef.current) {
-            alarmAudioRef.current.pause();
-            alarmAudioRef.current.currentTime = 0;
-        }
+        stopSiren();
     }, 15000);
 
     // Vibration
@@ -233,13 +307,9 @@ export const UserBroadcast: React.FC = () => {
         }, 3000);
     }
 
-    // Audio - Using HTML5 Audio Element for background capability
-    if (alarmAudioRef.current) {
-        alarmAudioRef.current.currentTime = 0;
-        // Playing an <audio> element that was initialized during 'enableAudio' (via user gesture)
-        // should play even in background if the silent loop kept the session active.
-        alarmAudioRef.current.play().catch(e => console.error("Siren play failed", e));
-    }
+    // Audio - Using Web Audio Oscillator for siren
+    startSiren();
+
   }, [audioEnabled]);
 
   // --- POLLING & WORKER ---
@@ -338,8 +408,6 @@ export const UserBroadcast: React.FC = () => {
         onPlay={() => setIsSilentPlaying(true)}
         onPause={() => setIsSilentPlaying(false)}
       />
-      {/* Alarm Audio - Not displayed, used for playback */}
-      <audio ref={alarmAudioRef} src={ALARM_MP3} playsInline style={{ display: 'none' }} />
 
       {/* EMERGENCY FULLSCREEN OVERLAY */}
       {isEmergencyMode && (
@@ -459,9 +527,9 @@ export const UserBroadcast: React.FC = () => {
         )}
       </main>
       
-      {/* Footer: Flex Row and Nowrap to ensure side-by-side on mobile */}
-      <footer className="bg-slate-950 p-4 border-t border-slate-900 flex flex-row justify-center items-center gap-4 flex-nowrap">
-        {!isAppInstalled && (
+      {/* Footer: Flex Row and Justify Between to ensure side-by-side on mobile */}
+      <footer className="bg-slate-950 p-4 border-t border-slate-900 flex flex-row justify-center items-center gap-8">
+        {(!isAppInstalled || deferredPrompt) && (
             <button 
                 onClick={handleInstallClick}
                 className="text-blue-500 hover:text-blue-400 font-bold text-xs flex items-center gap-2 animate-pulse whitespace-nowrap"
