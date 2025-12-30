@@ -6,6 +6,7 @@
  * 2. Sends "App Killed" Push Notifications.
  * 3. Sends Heartbeat to Admin Dashboard.
  * 4. Checks Recurring Rules every minute.
+ * 5. Checks Scheduled One-Time Alerts.
  */
 
 import { createRequire } from "module";
@@ -68,10 +69,13 @@ const alertsRef = db.ref("/sentinel_alerts_v1");
 const recurringRef = db.ref("/sentinel_recurring_v1");
 const statusRef = db.ref("/sentinel_status/monitor");
 
+// Track IDs we have already pushed to avoid duplicate spamming
+const processedIds = new Set();
+
 // --- 2. CONNECTION CHECK ---
 db.ref(".info/connected").on("value", (snap) => {
     if (snap.val() === true) {
-        console.log("🟢 Database Connected! Waiting for alerts...");
+        console.log("🟢 Database Connected! Monitoring timeline...");
     } else {
         console.log("🟡 Connecting to Database...");
     }
@@ -87,7 +91,6 @@ function startHeartbeat() {
     };
 
     updateStatus();
-    // ✅ REDUCED TO 2 SECONDS
     setInterval(updateStatus, 2000);
 
     const onExit = () => {
@@ -98,70 +101,83 @@ function startHeartbeat() {
     process.on('SIGTERM', onExit);
 }
 
-// --- 4. STANDARD ALERT MONITORING ---
-let lastProcessedId = null;
+// --- 4. MASTER SCHEDULER (CHECKS EVERYTHING) ---
+// This replaces the old separate listeners to ensure we handle future dates correctly.
 
-function startAlertListener() {
-    alertsRef.limitToLast(1).once('value', (snapshot) => {
-        const val = snapshot.val();
-        if (val) {
-            const list = Array.isArray(val) ? val : Object.values(val);
-            if (list.length > 0) lastProcessedId = list[list.length - 1].id;
+function startMasterScheduler() {
+    console.log("⏰ Scheduler Active: Checking for alerts every 1 second...");
+
+    // UPDATED: Check every 1000ms (1 second) instead of 2000ms
+    setInterval(async () => {
+        const now = Date.now();
+        const dateObj = new Date();
+        const currentTimeStr = `${dateObj.getHours().toString().padStart(2, '0')}:${dateObj.getMinutes().toString().padStart(2, '0')}`;
+        const currentSeconds = dateObj.getSeconds();
+
+        // A. CHECK STANDARD ALERTS (One-Time)
+        try {
+            const snapshot = await alertsRef.once('value');
+            const val = snapshot.val();
+            
+            if (val) {
+                const allAlerts = Array.isArray(val) ? val : Object.values(val);
+                
+                for (const alert of allAlerts) {
+                    // Logic:
+                    // 1. Alert Scheduled Time has passed or is now.
+                    // 2. Alert is not older than 1 minute (prevents spamming old alerts on restart).
+                    // 3. We haven't processed it in this session yet.
+                    
+                    const timeDiff = now - alert.scheduledTime;
+                    
+                    if (timeDiff >= 0 && timeDiff < 60000) {
+                        if (!processedIds.has(alert.id)) {
+                            console.log(`\n🔔 SCHEDULED ALERT DUE: ${alert.content}`);
+                            processedIds.add(alert.id);
+                            await sendNotifications(alert);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error("Read Error:", e.message);
         }
-        
-        alertsRef.on("value", async (change) => {
-            const allAlerts = change.val();
-            if (!allAlerts) return;
 
-            const alertList = Array.isArray(allAlerts) ? allAlerts : Object.values(allAlerts);
-            if (alertList.length === 0) return;
+        // B. CHECK RECURRING ALERTS (Every minute at 00 seconds)
+        // We check if we are in the first 5 seconds of the minute to ensure we hit it.
+        // With 1s interval, this will check roughly 5 times, but 'processedIds' prevents dupes.
+        if (currentSeconds < 5) {
+             try {
+                const snap = await recurringRef.once('value');
+                const val = snap.val();
+                const rules = val ? (Array.isArray(val) ? val : Object.values(val)) : [];
 
-            const latestAlert = alertList[alertList.length - 1];
+                rules.forEach(async (rule) => {
+                    // Create a unique ID for today's occurrence to prevent duplicate firing in the same minute
+                    const uniqueId = `recurring-${rule.id}-${dateObj.getDate()}-${currentTimeStr}`;
 
-            if (latestAlert.id !== lastProcessedId) {
-                console.log(`\n🔔 NEW ALERT: ${latestAlert.content}`);
-                lastProcessedId = latestAlert.id;
-                await sendNotifications(latestAlert);
-            }
-        });
-    });
-}
-
-// --- 5. RECURRING ALERT SCHEDULER ---
-let recurringRules = [];
-let lastMinuteChecked = null;
-
-function startRecurringScheduler() {
-    recurringRef.on('value', (snap) => {
-        const val = snap.val();
-        recurringRules = val ? (Array.isArray(val) ? val : Object.values(val)) : [];
-    });
-
-    // ✅ REDUCED TO 2 SECONDS
-    setInterval(() => {
-        const now = new Date();
-        const currentMinute = now.getMinutes();
-        if (currentMinute === lastMinuteChecked) return;
-        
-        const hours = now.getHours().toString().padStart(2, '0');
-        const minutes = now.getMinutes().toString().padStart(2, '0');
-        const currentTimeStr = `${hours}:${minutes}`;
-
-        recurringRules.forEach(async (rule) => {
-            if (rule.isActive && rule.scheduledTime === currentTimeStr) {
-                console.log(`\n🔄 RECURRING: ${rule.content}`);
-                await sendNotifications({
-                    id: `recurring-${rule.id}-${Date.now()}`,
-                    severity: rule.severity,
-                    content: `[DAILY] ${rule.content}`
+                    if (rule.isActive && rule.scheduledTime === currentTimeStr) {
+                         if (!processedIds.has(uniqueId)) {
+                            console.log(`\n🔄 RECURRING DUE: ${rule.content}`);
+                            processedIds.add(uniqueId);
+                            
+                            await sendNotifications({
+                                id: uniqueId,
+                                severity: rule.severity,
+                                content: `[DAILY] ${rule.content}`
+                            });
+                         }
+                    }
                 });
-            }
-        });
-        lastMinuteChecked = currentMinute;
-    }, 2000);
+             } catch (e) {
+                 console.error("Recurring Read Error:", e.message);
+             }
+        }
+
+    }, 1000); // Check every 1 second
 }
 
-// --- 6. NOTIFICATION SENDER (HIGH PRIORITY) ---
+// --- 5. NOTIFICATION SENDER (HIGH PRIORITY) ---
 async function sendNotifications(alertData) {
     const tokensSnapshot = await db.ref("fcm_tokens").once("value");
     if (!tokensSnapshot.exists()) return;
@@ -174,32 +190,20 @@ async function sendNotifications(alertData) {
 
     if (tokens.length === 0) return;
 
-    // Payload designed to break through Doze mode
+    // 💡 STRATEGY: High Priority Data Message
+    // This wakes up Android devices even in Doze mode or if App is killed.
     const payload = {
-        notification: {
-            title: `🚨 ${alertData.severity} ALERT 🚨`,
-            body: `${alertData.content}`,
-        },
         data: {
+            title: `🚨 ${alertData.severity} ALERT`,
+            body: `${alertData.content}`,
             alertId: alertData.id,
             severity: alertData.severity,
             forceAlarm: "true",
             timestamp: Date.now().toString()
         },
         android: {
-            priority: "high", // Wakes screen
-            ttl: 0, // Deliver immediately
-            notification: {
-                priority: "max",
-                // 🔔 NEW CHANNEL ID to force fresh sound settings on device
-                channelId: "sentinel_emergency_v3", 
-                defaultSound: true,
-                defaultVibrateTimings: true,
-                visibility: "public",
-                sound: "default",
-                notificationCount: 1,
-                clickAction: "FLUTTER_NOTIFICATION_CLICK" // Standard compat flag
-            }
+            priority: "high", // Critical for waking up Doze mode
+            ttl: 0 
         },
         webpush: {
             headers: { 
@@ -207,14 +211,6 @@ async function sendNotifications(alertData) {
             },
             fcm_options: {
                 link: "https://japs-parivar-siren.web.app/?emergency=true"
-            },
-            notification: {
-                requireInteraction: true,
-                renotify: true,
-                tag: `sentinel-alert-${Date.now()}`,
-                silent: false,
-                // Explicitly requesting default sound for web push
-                sound: "default" 
             }
         }
     };
@@ -224,12 +220,11 @@ async function sendNotifications(alertData) {
             tokens: tokens,
             ...payload
         });
-        console.log(`🚀 Sent to ${response.successCount} devices.`);
+        console.log(`🚀 Sent to ${response.successCount} devices (App Closed/Background).`);
     } catch (e) {
         console.error("🔥 Error sending:", e);
     }
 }
 
 startHeartbeat();
-startAlertListener();
-startRecurringScheduler();
+startMasterScheduler();

@@ -349,22 +349,22 @@ export const UserBroadcast: React.FC = () => {
       <header className="bg-slate-800 border-b border-slate-700 p-3 sticky top-0 z-50 shadow-md">
         <div className="max-w-4xl mx-auto flex flex-row justify-between items-center gap-2">
           
-          {/* LEFT: Identity */}
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 bg-red-600 rounded-full flex items-center justify-center shadow-lg shadow-red-900/50 ${isAlarmActive ? 'animate-spin' : 'animate-pulse'}`}>
+          {/* LEFT: Identity - Using flex-1 and min-w-0 to allow shrinking */}
+          <div className="flex items-center gap-3 overflow-hidden flex-1 min-w-0">
+            <div className={`w-10 h-10 flex-shrink-0 bg-red-600 rounded-full flex items-center justify-center shadow-lg shadow-red-900/50 ${isAlarmActive ? 'animate-spin' : 'animate-pulse'}`}>
                <i className="fas fa-bullhorn text-white text-lg md:text-xl"></i>
             </div>
-            <div className="flex flex-col">
-              <h1 className="text-lg md:text-xl font-bold tracking-wider text-red-500 leading-tight">SENTINEL</h1>
+            <div className="flex flex-col min-w-0">
+              <h1 className="text-lg md:text-xl font-bold tracking-wider text-red-500 leading-tight truncate">SENTINEL</h1>
               
-              <div className="flex items-center gap-2 md:gap-3 text-[10px] md:text-xs font-mono">
-                 {isCloud ? <span className="text-green-400 font-bold">● ON</span> : <span className="text-red-500 font-bold animate-pulse">● OFF</span>}
+              <div className="flex items-center gap-2 md:gap-3 text-[10px] md:text-xs font-mono truncate">
+                 {isCloud ? <span className="text-green-400 font-bold flex-shrink-0">● ON</span> : <span className="text-red-500 font-bold animate-pulse flex-shrink-0">● OFF</span>}
                  
                  {audioEnabled && (
                     wakeLock ? (
-                        <span className="text-blue-400 hidden md:inline"><i className="fas fa-desktop"></i> SCREEN ON</span>
+                        <span className="text-blue-400 hidden md:inline truncate"><i className="fas fa-desktop"></i> SCREEN ON</span>
                     ) : (
-                        <span className={`${wakeLockError ? 'text-red-400' : 'text-slate-500'} hidden md:inline`}><i className="fas fa-desktop"></i> {wakeLockError ? 'LOCK FAIL' : 'NORMAL'}</span>
+                        <span className={`${wakeLockError ? 'text-red-400' : 'text-slate-500'} hidden md:inline truncate`}><i className="fas fa-desktop"></i> {wakeLockError ? 'LOCK FAIL' : 'NORMAL'}</span>
                     )
                  )}
                  <span className={`transition-opacity duration-200 ${showHeartbeat ? 'opacity-100 text-blue-400' : 'opacity-20 text-slate-500'}`}><i className="fas fa-heartbeat"></i></span>
@@ -372,8 +372,8 @@ export const UserBroadcast: React.FC = () => {
             </div>
           </div>
           
-          {/* RIGHT: Actions */}
-          <div className="flex gap-2 items-center">
+          {/* RIGHT: Actions - Prevent shrinking */}
+          <div className="flex gap-2 items-center flex-shrink-0">
             
             {/* INSTALL BUTTON - Icon Only, No Animation */}
             {!isAppInstalled && (
@@ -424,6 +424,18 @@ export const UserBroadcast: React.FC = () => {
                  </div>
              )}
              
+             {/* Fallback Install Button in Main Area for Visibility */}
+             {!isAppInstalled && (
+               <div className="mt-6">
+                 <button 
+                    onClick={handleInstallClick}
+                    className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 px-4 py-2 rounded-full text-sm font-medium transition-colors"
+                  >
+                   <i className="fas fa-download"></i> Install App
+                 </button>
+               </div>
+             )}
+
              {/* INSTRUCTIONS */}
              <div className="mt-8 text-center max-w-sm mx-auto">
                 <div className="inline-block bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs text-left w-full mb-4">

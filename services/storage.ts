@@ -20,7 +20,8 @@ const apiFetch = async (endpoint: string) => {
   if (!isCloudEnabled()) return null;
   const backendUrl = getBackendUrl();
   try {
-    const res = await fetch(`${backendUrl}/${endpoint}.json`);
+    // UPDATED: Added ?nocache=${Date.now()} to prevent browser caching
+    const res = await fetch(`${backendUrl}/${endpoint}.json?nocache=${Date.now()}`);
     if (!res.ok) {
       throw new Error(`HTTP error! status: ${res.status}`);
     }
