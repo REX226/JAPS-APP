@@ -450,6 +450,17 @@ export const UserBroadcast: React.FC = () => {
           
           {/* RIGHT: Actions - Prevent shrinking */}
           <div className="flex gap-2 items-center flex-shrink-0">
+            {/* Install Button Logic - Moved to Header */}
+            {(!isAppInstalled || deferredPrompt) && (
+               <Button 
+                 onClick={handleInstallClick} 
+                 variant="outline" 
+                 className="h-10 text-xs md:text-sm font-bold border-blue-500 text-blue-400 hover:bg-blue-900/20"
+               >
+                 <i className="fas fa-download mr-1"></i> INSTALL
+               </Button>
+            )}
+
             {!audioEnabled ? (
               <Button onClick={() => enableAudio(false)} variant="danger" className="animate-bounce font-bold shadow-lg shadow-red-900/50 text-sm px-3 md:px-4 h-10">
                 ACTIVATE
@@ -485,6 +496,7 @@ export const UserBroadcast: React.FC = () => {
              
              {audioEnabled ? (
                  <>
+                   {/* Error warning removed from here */}
                    <div className="mt-2 text-green-500 text-xs font-mono animate-pulse">
                        <i className="fas fa-satellite-dish"></i> Background Signal Active
                    </div>
@@ -523,14 +535,6 @@ export const UserBroadcast: React.FC = () => {
       
       {/* Footer: Flex Row and Justify Between to ensure side-by-side on mobile */}
       <footer className="bg-slate-950 p-4 border-t border-slate-900 flex flex-row justify-center items-center gap-8">
-        {(!isAppInstalled || deferredPrompt) && (
-            <button 
-                onClick={handleInstallClick}
-                className="text-blue-500 hover:text-blue-400 font-bold text-xs flex items-center gap-2 animate-pulse whitespace-nowrap"
-            >
-                <i className="fas fa-download"></i> INSTALL APP
-            </button>
-        )}
         <button onClick={() => navigate('/admin')} className="text-slate-800 hover:text-slate-500 text-xs whitespace-nowrap">Admin Access</button>
       </footer>
     </div>
