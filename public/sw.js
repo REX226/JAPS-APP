@@ -1,19 +1,17 @@
 
-const CACHE_NAME = 'sentinel-v8'; // Version bumped to v8
+const CACHE_NAME = 'sentinel-v10'; // Version bumped
 const urlsToCache = [
   './',
   './index.html',
   './manifest.json',
-  './polling-worker.js', // Important to cache the worker
+  './polling-worker.js',
   'https://cdn.tailwindcss.com',
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css'
 ];
 
 // Install Event: Cache assets
 self.addEventListener('install', (event) => {
-  // Force this service worker to become the active one immediately
   self.skipWaiting(); 
-  
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => {
@@ -27,11 +25,7 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(event.request)
       .then((response) => {
-        // Return cache if found
-        if (response) {
-          return response;
-        }
-        // Otherwise fetch from network
+        if (response) return response;
         return fetch(event.request);
       })
   );
@@ -40,8 +34,6 @@ self.addEventListener('fetch', (event) => {
 // Activate Event: Clean up old caches
 self.addEventListener('activate', (event) => {
   const cacheWhitelist = [CACHE_NAME];
-  
-  // Take control of all pages immediately
   event.waitUntil(
     Promise.all([
       self.clients.claim(),
@@ -58,9 +50,11 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Handle notification clicks
+// Handle notification clicks (iOS & Android)
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
+
+  const urlToOpen = new URL(self.location.origin).href + '?emergency=true';
 
   event.waitUntil(
     clients.matchAll({
@@ -70,13 +64,20 @@ self.addEventListener('notificationclick', function(event) {
       // 1. Try to find an existing window and focus it
       for (var i = 0; i < clientList.length; i++) {
         var client = clientList[i];
-        if (client.url.includes('/') && 'focus' in client) {
-          return client.focus(); // Brings app to front
+        // Check if the client matches our scope and is focusable
+        if (client.url.startsWith(self.location.origin) && 'focus' in client) {
+          return client.focus().then((focusedClient) => {
+             // Navigate to emergency URL to trigger siren logic if needed
+             if (focusedClient && 'navigate' in focusedClient) {
+                 return focusedClient.navigate(urlToOpen);
+             }
+             return focusedClient;
+          });
         }
       }
       // 2. If no window exists, open a new one
       if (clients.openWindow) {
-        return clients.openWindow('./');
+        return clients.openWindow(urlToOpen);
       }
     })
   );

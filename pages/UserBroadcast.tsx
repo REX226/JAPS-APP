@@ -29,6 +29,7 @@ export const UserBroadcast: React.FC = () => {
   // Install State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallPopup, setShowInstallPopup] = useState(false);
+  const [showIOSInstructions, setShowIOSInstructions] = useState(false);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
 
@@ -159,8 +160,9 @@ export const UserBroadcast: React.FC = () => {
     checkStandalone();
     window.matchMedia('(display-mode: standalone)').addEventListener('change', checkStandalone);
     
-    // Check OS
-    setIsIOS(/iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream);
+    // Check OS (Specific check for iOS to warn about Silent Switch)
+    const isIOSCheck = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    setIsIOS(isIOSCheck);
 
     const isConf = checkFirebaseConfig();
     setFirebaseConfigured(isConf);
@@ -175,7 +177,10 @@ export const UserBroadcast: React.FC = () => {
 
     // Try to init push if cloud is active
     if (isCloudEnabled() && isConf) {
-        initializePushNotifications();
+        // Just checking status here, request happens on interaction
+        if (Notification.permission === 'granted') {
+            initializePushNotifications();
+        }
     }
 
     // CHECK EMERGENCY FLAG
@@ -189,10 +194,13 @@ export const UserBroadcast: React.FC = () => {
 
   const requestNotificationPermission = async () => {
     if (!("Notification" in window)) return;
+    
+    // iOS requires this to be a direct result of user interaction
     const perm = await Notification.requestPermission();
     setPushPermission(perm);
+    
     if (perm === 'granted' && checkFirebaseConfig()) {
-        initializePushNotifications();
+        await initializePushNotifications();
     }
   };
 
@@ -237,7 +245,7 @@ export const UserBroadcast: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [audioEnabled]);
 
-  const enableAudio = (isAutoResume = false) => {
+  const enableAudio = async (isAutoResume = false) => {
     // 1. Silent Loop for Background persistence
     if (silentAudioRef.current) {
         const playPromise = silentAudioRef.current.play();
@@ -264,7 +272,11 @@ export const UserBroadcast: React.FC = () => {
     localStorage.setItem('sentinel_armed', 'true');
     setIsEmergencyMode(false); // Clear emergency overlay once enabled
     
-    requestNotificationPermission();
+    // Explicitly request permissions on the click event (Vital for iOS)
+    if (!isAutoResume) {
+        await requestNotificationPermission();
+    }
+    
     requestWakeLock();
     
     // Play short confirmation beep
@@ -401,13 +413,13 @@ export const UserBroadcast: React.FC = () => {
             setShowInstallPopup(false);
         }
       });
+    } else if (isIOS) {
+        // Show iOS Manual Instructions
+        setShowIOSInstructions(true);
+        setShowInstallPopup(false);
     } else {
-      // Manual Instructions
-      if (isIOS) {
-          alert("📲 INSTALL ON iPHONE:\n\n1. Tap the 'Share' button (Box with arrow) at the bottom of Safari.\n\n2. Scroll down and tap 'Add to Home Screen' (+).");
-      } else {
-          alert("📲 INSTALL ON ANDROID:\n\n1. Tap the browser menu (three dots ⋮) at the top right.\n\n2. Select 'Install App' or 'Add to Home Screen'.");
-      }
+        // Fallback Android instructions
+        alert("To Install: Tap the browser menu (⋮) -> 'Install App' or 'Add to Home Screen'.");
     }
   };
 
@@ -443,8 +455,8 @@ export const UserBroadcast: React.FC = () => {
           onError={(e) => console.log("Custom Audio File not found. Ensure public/siren.mp3 exists.")}
       />
 
-      {/* INSTALL POPUP (FIXED BOTTOM) */}
-      {showInstallPopup && !isAppInstalled && (
+      {/* ANDROID INSTALL POPUP (FIXED BOTTOM) */}
+      {showInstallPopup && !isAppInstalled && !isIOS && (
          <div className="fixed bottom-4 left-4 right-4 z-[999] bg-slate-800 border border-slate-600 shadow-2xl rounded-lg p-4 flex flex-col gap-3 animate-bounce">
              <div className="flex justify-between items-start">
                  <div className="flex items-center gap-3">
@@ -462,6 +474,42 @@ export const UserBroadcast: React.FC = () => {
              </div>
              <Button onClick={handleInstallClick} fullWidth variant="primary">Install Now</Button>
          </div>
+      )}
+
+      {/* iOS INSTALL INSTRUCTIONS MODAL */}
+      {(showIOSInstructions || (isIOS && !isAppInstalled && showInstallPopup)) && (
+          <div className="fixed inset-0 z-[1000] bg-black/80 flex items-end md:items-center justify-center p-4">
+              <div className="bg-slate-800 w-full max-w-sm rounded-t-2xl md:rounded-2xl p-6 border-t md:border border-slate-700 shadow-2xl animate-slide-up">
+                  <div className="flex justify-between items-start mb-4">
+                       <h2 className="text-xl font-oswald text-white flex items-center gap-2">
+                           <i className="fab fa-apple text-white"></i> Install on iPhone
+                       </h2>
+                       <button onClick={() => { setShowIOSInstructions(false); setShowInstallPopup(false); }} className="text-slate-400 hover:text-white">
+                           <i className="fas fa-times text-lg"></i>
+                       </button>
+                  </div>
+                  
+                  <div className="space-y-4 text-sm text-slate-300">
+                      <p className="text-yellow-400 font-bold text-xs uppercase tracking-wider">Required for Notifications</p>
+                      <div className="flex items-center gap-4">
+                          <span className="bg-slate-700 w-8 h-8 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0">1</span>
+                          <p>Tap the <span className="text-blue-400 font-bold"><i className="fas fa-share-square"></i> Share Button</span> below.</p>
+                      </div>
+                      <div className="flex items-center gap-4">
+                          <span className="bg-slate-700 w-8 h-8 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0">2</span>
+                          <p>Scroll down and tap <span className="text-white font-bold"><i className="fas fa-plus-square"></i> Add to Home Screen</span>.</p>
+                      </div>
+                      <div className="flex items-center gap-4">
+                          <span className="bg-slate-700 w-8 h-8 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0">3</span>
+                          <p>Open the app from your Home Screen.</p>
+                      </div>
+                  </div>
+                  
+                  <div className="mt-6 flex justify-center">
+                       <i className="fas fa-arrow-down text-blue-400 animate-bounce text-2xl"></i>
+                  </div>
+              </div>
+          </div>
       )}
 
       {/* EMERGENCY FULLSCREEN OVERLAY */}
@@ -567,7 +615,25 @@ export const UserBroadcast: React.FC = () => {
              )}
 
              {/* INSTRUCTIONS */}
-             <div className="mt-8 text-center max-w-sm mx-auto">
+             <div className="mt-8 text-center max-w-sm mx-auto space-y-4">
+                
+                {/* iOS SPECIFIC WARNING */}
+                {isIOS && (
+                    <div className="bg-orange-900/50 border border-orange-600 p-4 rounded-lg text-left">
+                        <p className="text-orange-300 font-bold text-sm mb-2"><i className="fab fa-apple"></i> iPHONE WARNING</p>
+                        <ul className="list-disc pl-4 text-xs text-orange-200 space-y-1">
+                            <li>Check the <strong>Side Switch</strong>. If it shows <strong>RED</strong> (Silent), the alarm may not sound.</li>
+                            <li>You <strong>MUST</strong> add this app to your Home Screen for notifications to work.</li>
+                        </ul>
+                         {/* Manual Install Button for iOS users who dismissed the popup */}
+                         {!isAppInstalled && (
+                            <button onClick={() => setShowIOSInstructions(true)} className="mt-3 text-xs bg-orange-800 hover:bg-orange-700 text-white px-3 py-1 rounded">
+                                Show Install Guide
+                            </button>
+                         )}
+                    </div>
+                )}
+
                 <div className="inline-block bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs text-left w-full mb-4">
                     <p className="font-bold text-slate-400 mb-2"><i className="fas fa-lightbulb text-yellow-500"></i> BEST PRACTICES</p>
                     <ul className="space-y-2 text-slate-500 list-disc pl-4">
