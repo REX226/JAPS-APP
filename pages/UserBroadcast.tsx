@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertMessage } from '../types';
-import { getActiveAlerts } from '../services/storage';
+import { getActiveAlerts, getNextEvent } from '../services/storage';
 import { AlertCard } from '../components/AlertCard';
 import { Button } from '../components/Button';
 import { isCloudEnabled, getBackendUrl } from '../services/config';
@@ -11,10 +11,14 @@ import { initializePushNotifications, checkFirebaseConfig } from '../services/fi
 // Tiny silent MP3 to keep the audio channel open and background execution alive
 const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV6urq6urq6urq6urq6urq6urq6urq6urq6v////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAASAAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA";
 
+// ✅ CUSTOM AUDIO FILE PATH (Put your file in the 'public' folder)
+const CUSTOM_SIREN_PATH = "./siren.mp3";
+
 export const UserBroadcast: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [alerts, setAlerts] = useState<AlertMessage[]>([]);
+  const [nextEvent, setNextEvent] = useState<{ time: number, content: string, type: string } | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [isSilentPlaying, setIsSilentPlaying] = useState(false);
   const [lastAlertCount, setLastAlertCount] = useState<number | null>(null);
@@ -42,15 +46,15 @@ export const UserBroadcast: React.FC = () => {
   
   // Refs
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const alarmAudioRef = useRef<HTMLAudioElement | null>(null); // ✅ Ref for Custom Audio
   const vibrationIntervalRef = useRef<any>(null);
   const workerRef = useRef<Worker | null>(null);
   const fetchAlertsRef = useRef<() => void>(() => {});
-
-  // Web Audio API Refs (Replaces Audio Element for Siren)
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const sirenOscRef = useRef<OscillatorNode | null>(null);
-  const sirenGainRef = useRef<GainNode | null>(null);
-  const lfoRef = useRef<OscillatorNode | null>(null);
+  const lastCheckTimeRef = useRef<number>(Date.now());
+  
+  // Ref to hold next event time for worker-thread access
+  const nextEventTimeRef = useRef<number | null>(null);
 
   // --- AUDIO HELPERS ---
   const getAudioContext = () => {
@@ -85,57 +89,60 @@ export const UserBroadcast: React.FC = () => {
       } catch(e) { console.error("Beep Error:", e); }
   };
 
-  const startSiren = () => {
-      stopSiren(); // Ensure no duplicates
-      try {
-          const ctx = getAudioContext();
-          if(ctx.state === 'suspended') ctx.resume();
-          
-          // Main Tone
-          const mainOsc = ctx.createOscillator();
-          const mainGain = ctx.createGain();
-          
-          mainOsc.type = 'sawtooth';
-          mainOsc.frequency.value = 600; // Base frequency
-          
-          // LFO for "Wailing" effect (Siren)
-          const lfo = ctx.createOscillator();
-          lfo.type = 'triangle';
-          lfo.frequency.value = 0.5; // Speed of wail (0.5Hz = 2s cycle)
-          
-          const lfoGain = ctx.createGain();
-          lfoGain.gain.value = 400; // Range of wail (+/- 400Hz)
-          
-          // Connections: LFO -> LFO Gain -> Main Osc Frequency
-          lfo.connect(lfoGain);
-          lfoGain.connect(mainOsc.frequency);
-          
-          // Main -> Output
-          mainOsc.connect(mainGain);
-          mainGain.connect(ctx.destination);
-          
-          mainGain.gain.setValueAtTime(0.3, ctx.currentTime); // Volume
-          
-          mainOsc.start();
-          lfo.start();
-          
-          sirenOscRef.current = mainOsc;
-          sirenGainRef.current = mainGain;
-          lfoRef.current = lfo;
-      } catch(e) { console.error("Siren Start Error:", e); }
+  const stopSiren = () => {
+      // 1. Stop Audio File
+      if (alarmAudioRef.current) {
+          alarmAudioRef.current.pause();
+          alarmAudioRef.current.currentTime = 0;
+      }
+      // 2. Stop Vibration
+      stopVibration();
+      setIsAlarmActive(false);
   };
 
-  const stopSiren = () => {
-      try {
-          if (sirenOscRef.current) { sirenOscRef.current.stop(); sirenOscRef.current.disconnect(); }
-          if (lfoRef.current) { lfoRef.current.stop(); lfoRef.current.disconnect(); }
-          if (sirenGainRef.current) sirenGainRef.current.disconnect();
-          
-          sirenOscRef.current = null;
-          lfoRef.current = null;
-          sirenGainRef.current = null;
-      } catch(e) { console.error("Siren Stop Error:", e); }
+  const stopVibration = () => {
+    if (vibrationIntervalRef.current) {
+      clearInterval(vibrationIntervalRef.current);
+      vibrationIntervalRef.current = null;
+    }
+    if (navigator.vibrate) navigator.vibrate(0);
   };
+
+  const playSiren = useCallback(() => {
+    if (isAlarmActive) return; // Prevent double trigger
+    setIsAlarmActive(true);
+    
+    // Auto stop after 20 seconds
+    setTimeout(() => { 
+        stopSiren();
+    }, 20000);
+
+    // 1. Vibration
+    if (navigator.vibrate) {
+        navigator.vibrate([200, 100, 200, 100, 200, 100, 500, 100, 500, 100, 500, 100]);
+        if (vibrationIntervalRef.current) clearInterval(vibrationIntervalRef.current);
+        vibrationIntervalRef.current = setInterval(() => {
+             navigator.vibrate([200, 100, 200, 100, 200, 100, 500, 100, 500, 100, 500, 100]);
+        }, 3000);
+    }
+
+    // 2. Play Custom Audio File
+    if (alarmAudioRef.current) {
+        // Ensure volume is maxed (programmatically limits apply)
+        alarmAudioRef.current.volume = 1.0; 
+        alarmAudioRef.current.currentTime = 0;
+        
+        const playPromise = alarmAudioRef.current.play();
+        if (playPromise !== undefined) {
+            playPromise.catch(error => {
+                console.error("Audio playback failed:", error);
+                // Fallback to beep if file fails
+                playBeep();
+            });
+        }
+    }
+
+  }, [isAlarmActive]);
 
   // --- INITIALIZATION ---
   useEffect(() => {
@@ -213,12 +220,17 @@ export const UserBroadcast: React.FC = () => {
 
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && audioEnabled) {
-        requestWakeLock();
-        // Ensure silent loop is playing
-        if (silentAudioRef.current && silentAudioRef.current.paused) {
-            silentAudioRef.current.play().catch(() => {});
-        }
+      if (document.visibilityState === 'visible') {
+         // Immediate re-fetch when app comes to foreground (fixes "5 hour sleep" issue)
+         fetchAlerts();
+
+         if (audioEnabled) {
+            requestWakeLock();
+            // Ensure silent loop is playing
+            if (silentAudioRef.current && silentAudioRef.current.paused) {
+                silentAudioRef.current.play().catch(() => {});
+            }
+         }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -279,39 +291,8 @@ export const UserBroadcast: React.FC = () => {
         silentAudioRef.current.pause();
         setIsSilentPlaying(false);
     }
+    nextEventTimeRef.current = null; // Clear local schedule
   };
-
-  const stopVibration = () => {
-    if (vibrationIntervalRef.current) {
-      clearInterval(vibrationIntervalRef.current);
-      vibrationIntervalRef.current = null;
-    }
-    if (navigator.vibrate) navigator.vibrate(0);
-  };
-
-  const playSiren = useCallback(() => {
-    setIsAlarmActive(true);
-    
-    // Auto stop after 15 seconds
-    setTimeout(() => { 
-        setIsAlarmActive(false); 
-        stopVibration(); 
-        stopSiren();
-    }, 15000);
-
-    // Vibration
-    if (navigator.vibrate) {
-        navigator.vibrate([200, 100, 200, 100, 200, 100, 500, 100, 500, 100, 500, 100]);
-        if (vibrationIntervalRef.current) clearInterval(vibrationIntervalRef.current);
-        vibrationIntervalRef.current = setInterval(() => {
-             navigator.vibrate([200, 100, 200, 100, 200, 100, 500, 100, 500, 100, 500, 100]);
-        }, 3000);
-    }
-
-    // Audio - Using Web Audio Oscillator for siren
-    startSiren();
-
-  }, [audioEnabled]);
 
   // --- POLLING & WORKER ---
   const fetchAlerts = useCallback(async () => {
@@ -326,7 +307,19 @@ export const UserBroadcast: React.FC = () => {
       }
     }
     setLastAlertCount(currentAlerts.length);
-  }, [lastAlertCount, playSiren]);
+
+    // --- NEW: UPDATE NEXT EVENT REF FOR WORKER ---
+    const next = await getNextEvent();
+    setNextEvent(next);
+
+    // If there is an upcoming event, store it in the ref so the worker can check it every second
+    if (next && audioEnabled) {
+        nextEventTimeRef.current = next.time;
+    } else {
+        nextEventTimeRef.current = null;
+    }
+
+  }, [lastAlertCount, playSiren, audioEnabled]);
 
   useEffect(() => { fetchAlertsRef.current = fetchAlerts; }, [fetchAlerts]);
 
@@ -343,14 +336,31 @@ export const UserBroadcast: React.FC = () => {
         workerRef.current = new Worker(new URL('./polling-worker.js', window.location.origin + window.location.pathname.replace(/\/[^/]*$/, '/')).href);
         workerRef.current.onmessage = (e) => {
           if (e.data === 'tick') {
-            setLastHeartbeat(Date.now());
+            const now = Date.now();
+            
+            // --- OFFLINE ALARM CHECK ---
+            // Triggers exactly on time even if network is slow
+            if (nextEventTimeRef.current && now >= nextEventTimeRef.current) {
+                console.log("⏰ Local Worker Timer Triggered!");
+                playSiren();
+                nextEventTimeRef.current = null; // Prevent looping
+                if (fetchAlertsRef.current) fetchAlertsRef.current(); // Sync with server
+            }
+
+            // DRIFT DETECTION: If tick is delayed by > 5 seconds, we likely just woke up
+            if (now - lastCheckTimeRef.current > 5000) {
+                 console.log("System woke from sleep - forcing fetch");
+                 if (fetchAlertsRef.current) fetchAlertsRef.current();
+            }
+            lastCheckTimeRef.current = now;
+            setLastHeartbeat(now);
             if (fetchAlertsRef.current) fetchAlertsRef.current();
           }
         };
         workerRef.current.postMessage('start');
     } catch(e) { }
     return () => workerRef.current?.terminate();
-  }, []);
+  }, [playSiren]);
 
   const showSystemNotification = (alert: AlertMessage) => {
       if (!("Notification" in window) || Notification.permission !== "granted") return;
@@ -401,17 +411,36 @@ export const UserBroadcast: React.FC = () => {
     }
   };
 
+  const formatNextTime = (ts: number) => {
+      const d = new Date(ts);
+      const now = new Date();
+      const isToday = d.getDate() === now.getDate();
+      const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+      return isToday ? `Today at ${timeStr}` : `${d.toLocaleDateString()} at ${timeStr}`;
+  };
+
   return (
     <div className={`min-h-screen text-white flex flex-col transition-colors duration-500 ${isAlarmActive ? 'alarm-flash' : 'bg-slate-900'}`}>
+      
+      {/* 1. SILENT AUDIO LOOP (Maintains background activity) */}
       <audio 
         ref={silentAudioRef} 
         src={SILENT_MP3} 
         loop 
         playsInline 
-        // Using opacity 0 and absolute position ensures it is rendered in DOM but invisible, preventing some browser auto-pause policies
         style={{ position: 'absolute', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none' }} 
         onPlay={() => setIsSilentPlaying(true)}
         onPause={() => setIsSilentPlaying(false)}
+      />
+
+      {/* 2. CUSTOM ALARM AUDIO (Plays when alert triggers) */}
+      <audio 
+          ref={alarmAudioRef} 
+          src={CUSTOM_SIREN_PATH} 
+          loop 
+          preload="auto"
+          style={{ display: 'none' }}
+          onError={(e) => console.log("Custom Audio File not found. Ensure public/siren.mp3 exists.")}
       />
 
       {/* INSTALL POPUP (FIXED BOTTOM) */}
@@ -516,6 +545,20 @@ export const UserBroadcast: React.FC = () => {
                    <div className="mt-2 text-green-500 text-xs font-mono animate-pulse">
                        <i className="fas fa-satellite-dish"></i> Background Signal Active
                    </div>
+                   
+                   {/* SHOW NEXT ALARM INFO */}
+                   {nextEvent && (
+                       <div className="mt-6 bg-slate-800 border border-slate-700 p-4 rounded-lg flex items-center gap-4 animate-pulse">
+                           <div className="text-yellow-500 text-2xl">
+                               <i className="fas fa-clock"></i>
+                           </div>
+                           <div className="text-left">
+                               <div className="text-xs text-slate-400 font-bold uppercase tracking-wider">Upcoming Alarm</div>
+                               <div className="text-lg font-oswald text-white">{formatNextTime(nextEvent.time)}</div>
+                               <div className="text-xs text-slate-500 truncate max-w-[200px]">{nextEvent.content}</div>
+                           </div>
+                       </div>
+                   )}
                  </>
              ) : (
                  <div className="mt-2 text-slate-600 text-xs font-mono">

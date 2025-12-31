@@ -1,3 +1,4 @@
+
 /**
  * SENTINEL MONITOR (CLOUD READY)
  * 
@@ -18,6 +19,8 @@ const fs = require("fs");
 
 // --- CONFIGURATION ---
 const MANUAL_DB_URL = process.env.DB_URL || "https://japs-parivar-siren-default-rtdb.firebaseio.com"; 
+// Allow overriding the click-through URL via Environment Variable (e.g. for Vercel)
+const SITE_URL = process.env.SITE_URL || "https://japs-parivar-siren.web.app";
 
 console.log("\n========================================");
 console.log("   🛡️  SENTINEL MONITOR INITIALIZING");
@@ -75,6 +78,7 @@ const dbUrl = MANUAL_DB_URL;
 
 console.log(`✅ Project ID:  ${serviceAccount.project_id}`);
 console.log(`🔗 Database:    ${dbUrl}`);
+console.log(`🔗 App Link:    ${SITE_URL}`);
 console.log("----------------------------------------");
 
 try {
@@ -149,9 +153,14 @@ function startMasterScheduler() {
                 const allAlerts = Array.isArray(val) ? val : Object.values(val);
                 for (const alert of allAlerts) {
                     const timeDiff = now - alert.scheduledTime;
-                    if (timeDiff >= 0 && timeDiff < 60000) {
+                    
+                    // 🛡️ UPDATED LOGIC: 
+                    // Previously: timeDiff < 60000 (1 min window)
+                    // New: timeDiff < 900000 (15 min window)
+                    // This handles cases where the Render server sleeps and wakes up 5 mins late.
+                    if (timeDiff >= 0 && timeDiff < 900000) {
                         if (!processedIds.has(alert.id)) {
-                            console.log(`\n🔔 SCHEDULED ALERT DUE: ${alert.content}`);
+                            console.log(`\n🔔 SCHEDULED ALERT DUE: ${alert.content} (Lag: ${Math.floor(timeDiff/1000)}s)`);
                             processedIds.add(alert.id);
                             await sendNotifications(alert);
                         }
@@ -163,7 +172,7 @@ function startMasterScheduler() {
         }
 
         // B. CHECK RECURRING ALERTS
-        if (currentSeconds < 5) {
+        if (currentSeconds < 10) { // Check for first 10 seconds of minute
              try {
                 const snap = await recurringRef.once('value');
                 const val = snap.val();
@@ -187,7 +196,7 @@ function startMasterScheduler() {
                  console.error("Recurring Read Error:", e.message);
              }
         }
-    }, 1000); 
+    }, 2000); // Check every 2 seconds to save CPU
 }
 
 // --- 6. NOTIFICATION SENDER ---
@@ -203,6 +212,8 @@ async function sendNotifications(alertData) {
 
     if (tokens.length === 0) return;
 
+    const linkUrl = `${SITE_URL}/?emergency=true`;
+
     // Data-Only Payload (Forces Service Worker execution)
     const payload = {
         data: {
@@ -212,10 +223,10 @@ async function sendNotifications(alertData) {
             severity: alertData.severity,
             forceAlarm: "true",
             timestamp: Date.now().toString(),
-            url: "https://japs-parivar-siren.web.app/?emergency=true"
+            url: linkUrl
         },
         android: { priority: "high", ttl: 0 },
-        webpush: { headers: { Urgency: "high" }, fcm_options: { link: "https://japs-parivar-siren.web.app/?emergency=true" } }
+        webpush: { headers: { Urgency: "high" }, fcm_options: { link: linkUrl } }
     };
 
     try {

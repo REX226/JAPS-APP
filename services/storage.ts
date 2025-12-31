@@ -202,6 +202,46 @@ export const getScheduledAlerts = async (): Promise<AlertMessage[]> => {
     .sort((a, b) => a.scheduledTime - b.scheduledTime);
 };
 
+export const getNextEvent = async (): Promise<{ time: number, content: string, type: 'MANUAL' | 'RECURRING' } | null> => {
+    // 1. Manual
+    const manual = await getScheduledAlerts();
+    const nextManual = manual.length > 0 ? manual[0] : null;
+
+    // 2. Recurring (Next occurrence)
+    const recurring = await getRecurringAlerts();
+    let nextRecurring: { time: number, content: string } | null = null;
+    
+    const now = new Date();
+    
+    recurring.filter(r => r.isActive).forEach(r => {
+        const [h, m] = r.scheduledTime.split(':').map(Number);
+        const rDate = new Date(now);
+        rDate.setHours(h, m, 0, 0);
+        
+        // If passed today, add 1 day
+        if (rDate.getTime() <= now.getTime()) {
+            rDate.setDate(rDate.getDate() + 1);
+        }
+        
+        if (!nextRecurring || rDate.getTime() < nextRecurring.time) {
+            nextRecurring = { time: rDate.getTime(), content: r.content };
+        }
+    });
+
+    // Compare Manual vs Recurring to find the absolute next event
+    if (nextManual && nextRecurring) {
+        return nextManual.scheduledTime < nextRecurring.time 
+            ? { time: nextManual.scheduledTime, content: nextManual.content, type: 'MANUAL' }
+            : { time: nextRecurring.time, content: nextRecurring.content, type: 'RECURRING' };
+    } else if (nextManual) {
+        return { time: nextManual.scheduledTime, content: nextManual.content, type: 'MANUAL' };
+    } else if (nextRecurring) {
+        return { time: nextRecurring.time, content: nextRecurring.content, type: 'RECURRING' };
+    }
+    
+    return null;
+}
+
 export const getActiveAlerts = async (): Promise<AlertMessage[]> => {
   const now = new Date();
   const currentTimestamp = now.getTime();

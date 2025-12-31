@@ -25,7 +25,10 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   // Common State
   const [content, setContent] = useState('');
   const [severity, setSeverity] = useState<AlertSeverity>(AlertSeverity.INFO);
-  const [timeInput, setTimeInput] = useState(''); // HH:MM
+  
+  // Inputs
+  const [timeInput, setTimeInput] = useState(''); // HH:MM (For Recurring)
+  const [dateTimeInput, setDateTimeInput] = useState(''); // YYYY-MM-DDTHH:MM (For Manual)
   
   // Data State
   const [scheduledAlerts, setScheduledAlerts] = useState<AlertMessage[]>([]);
@@ -81,7 +84,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!content || !timeInput) return;
+    if (!content || !dateTimeInput) return;
 
     if (isCloud && monitorStatus === 'offline') {
         if (!window.confirm("⚠️ WARNING: The Cloud Server appears OFFLINE.\n\nPush notifications might not reach locked phones.\n\nSchedule anyway?")) {
@@ -89,9 +92,11 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         }
     }
 
-    const now = new Date();
-    const [hours, minutes] = timeInput.split(':').map(Number);
-    const scheduledDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0, 0);
+    const scheduledDate = new Date(dateTimeInput);
+    if (isNaN(scheduledDate.getTime())) {
+        alert("Invalid Date");
+        return;
+    }
 
     const newAlert = createAlert(content, scheduledDate.getTime(), severity);
     await saveAlert(newAlert);
@@ -117,6 +122,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   const resetForm = () => {
     setContent('');
     setTimeInput('');
+    setDateTimeInput('');
     setSeverity(AlertSeverity.INFO);
   };
 
@@ -179,6 +185,13 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   // Validation helper
   const isUrlSuspicious = dbUrl && !dbUrl.includes('.firebaseio.com') && !dbUrl.includes('.firebasedatabase.app');
   const isUrlTypo = dbUrl && (dbUrl.endsWith('.co') || dbUrl.endsWith('.c'));
+
+  // Get current date/time for min attribute
+  const getCurrentDateTime = () => {
+      const now = new Date();
+      now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+      return now.toISOString().slice(0, 16);
+  };
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col md:flex-row">
@@ -292,6 +305,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   <form onSubmit={handleCreateRecurring} className="space-y-6 bg-slate-800 p-6 md:p-8 rounded-lg shadow-xl border border-slate-700">
                     <FormFields 
                       severity={severity} setSeverity={setSeverity}
+                      isRecurring={true}
                       timeInput={timeInput} setTimeInput={setTimeInput}
                       content={content} setContent={setContent}
                       isGenerating={isGenerating} onGenerate={handleGenerateAI}
@@ -354,13 +368,15 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
             <form onSubmit={handleCreate} className="space-y-6 bg-slate-800 p-6 md:p-8 rounded-lg shadow-xl border border-slate-700">
               <FormFields 
                 severity={severity} setSeverity={setSeverity}
-                timeInput={timeInput} setTimeInput={setTimeInput}
+                isRecurring={false}
+                timeInput={dateTimeInput} setTimeInput={setDateTimeInput}
                 content={content} setContent={setContent}
                 isGenerating={isGenerating} onGenerate={handleGenerateAI}
+                minDate={getCurrentDateTime()}
               />
               <div className="pt-4">
                 <Button type="submit" fullWidth disabled={isGenerating}>
-                  <i className="fas fa-check mr-2"></i> Schedule Once
+                  <i className="fas fa-check mr-2"></i> Schedule One-Time Alert
                 </Button>
               </div>
             </form>
@@ -467,7 +483,14 @@ const NavButton: React.FC<any> = ({ active, onClick, icon, label, count }) => (
     </button>
 );
 
-const FormFields: React.FC<any> = ({ severity, setSeverity, timeInput, setTimeInput, content, setContent, isGenerating, onGenerate }) => (
+// Updated form fields to handle Date-Time vs Time-Only
+const FormFields: React.FC<any> = ({ 
+    severity, setSeverity, 
+    timeInput, setTimeInput, 
+    content, setContent, 
+    isGenerating, onGenerate, 
+    isRecurring, minDate 
+}) => (
   <>
     <div>
       <label className="block text-sm font-medium text-slate-400 mb-2">Severity Level</label>
@@ -478,14 +501,36 @@ const FormFields: React.FC<any> = ({ severity, setSeverity, timeInput, setTimeIn
       </div>
     </div>
     <div>
-      <label className="block text-sm font-medium text-slate-400 mb-2">Time (HH:MM)</label>
-      <input type="time" required value={timeInput} onChange={(e) => setTimeInput(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono text-lg" />
+      <label className="block text-sm font-medium text-slate-400 mb-2">
+          {isRecurring ? 'Time (Every Day)' : 'Scheduled Date & Time'}
+      </label>
+      
+      {isRecurring ? (
+          <input 
+            type="time" 
+            required 
+            value={timeInput} 
+            onChange={(e) => setTimeInput(e.target.value)} 
+            className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono text-lg" 
+          />
+      ) : (
+          <input 
+            type="datetime-local" 
+            required 
+            min={minDate}
+            value={timeInput} 
+            onChange={(e) => setTimeInput(e.target.value)} 
+            className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono text-lg" 
+          />
+      )}
     </div>
     <div>
       <label className="block text-sm font-medium text-slate-400 mb-2">Message Content</label>
       <div className="relative">
         <textarea required value={content} onChange={(e) => setContent(e.target.value)} rows={4} placeholder="Enter alert message..." className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-blue-500 outline-none pr-12" />
-        <button type="button" onClick={onGenerate} disabled={isGenerating} className="absolute top-2 right-2 text-slate-400 hover:text-blue-400 p-2"><i className={`fas ${isGenerating ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'}`}></i></button>
+        {process.env.API_KEY && (
+             <button type="button" onClick={onGenerate} disabled={isGenerating} className="absolute top-2 right-2 text-slate-400 hover:text-blue-400 p-2" title="Generate with AI"><i className={`fas ${isGenerating ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'}`}></i></button>
+        )}
       </div>
     </div>
   </>
