@@ -53,6 +53,7 @@ export const UserBroadcast: React.FC = () => {
   const fetchAlertsRef = useRef<() => void>(() => {});
   const audioCtxRef = useRef<AudioContext | null>(null);
   const lastCheckTimeRef = useRef<number>(Date.now());
+  const tickCountRef = useRef<number>(0);
   
   // Ref to hold next event time for worker-thread access
   const nextEventTimeRef = useRef<number | null>(null);
@@ -229,12 +230,26 @@ export const UserBroadcast: React.FC = () => {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-         // Immediate re-fetch when app comes to foreground (fixes "5 hour sleep" issue)
+         // 1. AUTO UPDATE CHECK: Ask browser to check if sw.js has changed
+         if ('serviceWorker' in navigator) {
+             try {
+                navigator.serviceWorker.getRegistration().then(reg => {
+                    if (reg) {
+                        reg.update().catch(err => console.log('SW update check skipped (offline/dev)'));
+                    }
+                }).catch(e => {
+                    // Suppress 'Origin Mismatch' error in AI Studio Preview / Dev environments
+                    console.log('SW Registration check skipped (environment restriction)');
+                });
+             } catch(e) { }
+         }
+
+         // 2. Immediate re-fetch when app comes to foreground
          fetchAlerts();
 
+         // 3. Audio persistence
          if (audioEnabled) {
             requestWakeLock();
-            // Ensure silent loop is playing
             if (silentAudioRef.current && silentAudioRef.current.paused) {
                 silentAudioRef.current.play().catch(() => {});
             }
@@ -320,7 +335,7 @@ export const UserBroadcast: React.FC = () => {
     }
     setLastAlertCount(currentAlerts.length);
 
-    // --- NEW: UPDATE NEXT EVENT REF FOR WORKER ---
+    // --- UPDATE NEXT EVENT REF FOR WORKER ---
     const next = await getNextEvent();
     setNextEvent(next);
 
@@ -350,13 +365,20 @@ export const UserBroadcast: React.FC = () => {
           if (e.data === 'tick') {
             const now = Date.now();
             
-            // --- OFFLINE ALARM CHECK ---
+            // --- OFFLINE ALARM CHECK (PRECISION: 1 SECOND) ---
             // Triggers exactly on time even if network is slow
             if (nextEventTimeRef.current && now >= nextEventTimeRef.current) {
                 console.log("⏰ Local Worker Timer Triggered!");
                 playSiren();
                 nextEventTimeRef.current = null; // Prevent looping
                 if (fetchAlertsRef.current) fetchAlertsRef.current(); // Sync with server
+            }
+
+            // --- HIGH PRECISION MODE (EVERY 2 SECONDS) ---
+            // Max speed for manual remote alerts. Ignores battery saving.
+            tickCountRef.current += 1;
+            if (tickCountRef.current % 2 === 0) {
+                 if (fetchAlertsRef.current) fetchAlertsRef.current();
             }
 
             // DRIFT DETECTION: If tick is delayed by > 5 seconds, we likely just woke up
@@ -366,7 +388,11 @@ export const UserBroadcast: React.FC = () => {
             }
             lastCheckTimeRef.current = now;
             setLastHeartbeat(now);
-            if (fetchAlertsRef.current) fetchAlertsRef.current();
+            
+            // Initial load
+            if (tickCountRef.current === 1) {
+                if (fetchAlertsRef.current) fetchAlertsRef.current();
+            }
           }
         };
         workerRef.current.postMessage('start');
