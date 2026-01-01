@@ -101,10 +101,12 @@ export const UserBroadcast: React.FC = () => {
     startDigitalSiren();
 
     if (navigator.vibrate) {
-        navigator.vibrate([1000, 200, 1000, 200, 2000]);
+        // Vibrate for exactly 1 second to match the audio
+        navigator.vibrate([1000]);
     }
 
-    setTimeout(() => stopAlarm(), 30000);
+    // 3. Stop automatically after 1 second
+    setTimeout(() => stopAlarm(), 1000);
   }, []);
 
   const stopAlarm = () => {
@@ -204,7 +206,7 @@ export const UserBroadcast: React.FC = () => {
   }, []);
 
   return (
-    <div className={`min-h-screen text-white flex flex-col transition-colors duration-500 ${isAlarmActive ? 'alarm-flash' : 'bg-slate-900'}`}>
+    <div className={`min-h-screen text-white flex flex-col transition-colors duration-200 ${isAlarmActive ? 'bg-red-700' : 'bg-slate-900'}`}>
       
       {/* 1. SILENT AUDIO (Web Engine) */}
       <audio 
