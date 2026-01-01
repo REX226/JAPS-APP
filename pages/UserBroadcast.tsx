@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { AlertMessage } from '../types';
 import { getActiveAlerts, getNextEvent } from '../services/storage';
 import { AlertCard } from '../components/AlertCard';
@@ -9,6 +9,7 @@ import { isCloudEnabled } from '../services/config';
 import { initializePushNotifications } from '../services/firebase';
 
 // 1. SILENT MP3 (Base64) - Plays continuously to keep the browser tab awake
+// This is critical for iOS/Android background execution
 const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV6urq6urq6urq6urq6urq6urq6urq6urq6v////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAASAAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA";
 
 export const UserBroadcast: React.FC = () => {
@@ -16,7 +17,6 @@ export const UserBroadcast: React.FC = () => {
   
   // UI State
   const [alerts, setAlerts] = useState<AlertMessage[]>([]);
-  const [nextEvent, setNextEvent] = useState<{ time: number, content: string } | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
@@ -24,59 +24,49 @@ export const UserBroadcast: React.FC = () => {
   // Refs for Engine
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
   const nextEventRef = useRef<{ time: number, content: string } | null>(null);
-  const loopIdRef = useRef<any>(null);
+  const workerRef = useRef<Worker | null>(null); // Use Web Worker for background timing
+  const lastDataCheckRef = useRef<number>(0);
 
   // Digital Siren Refs
   const audioContextRef = useRef<AudioContext | null>(null);
   const oscillatorRef = useRef<OscillatorNode | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
   
   // --- DIGITAL SIREN (Web Audio API) ---
-  // This generates sound via code, no MP3 file needed.
   const startDigitalSiren = () => {
       try {
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
           if (!audioContextRef.current) {
-              audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+              audioContextRef.current = new AudioContextClass();
           }
 
           const ctx = audioContextRef.current;
           
-          // Resume context if suspended (common in browsers)
+          // Force resume (Fix for iOS locked screen)
           if (ctx.state === 'suspended') {
               ctx.resume();
           }
 
-          // Create Oscillator (The sound generator)
+          // Create Oscillator
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
 
-          osc.type = 'sawtooth'; // Harsh sound
-          osc.frequency.value = 600; // Start freq
+          osc.type = 'square'; // 'Square' wave cuts through noise better than sawtooth
+          osc.frequency.setValueAtTime(800, ctx.currentTime);
+          osc.frequency.linearRampToValueAtTime(1200, ctx.currentTime + 0.1);
+          osc.frequency.linearRampToValueAtTime(800, ctx.currentTime + 0.6);
 
-          // LFO to modulate frequency (Make it wail up and down)
-          const lfo = ctx.createOscillator();
-          lfo.type = 'sine';
-          lfo.frequency.value = 2; // Speed of wail (2 Hz)
-          
-          const lfoGain = ctx.createGain();
-          lfoGain.gain.value = 400; // Depth of wail (+- 400Hz)
-
-          lfo.connect(lfoGain);
-          lfoGain.connect(osc.frequency);
-          
           osc.connect(gain);
           gain.connect(ctx.destination);
 
           osc.start();
-          lfo.start();
-
-          // Save refs to stop later
-          oscillatorRef.current = osc;
-          gainNodeRef.current = gain;
           
-          // Ramp volume up
+          // Save ref
+          oscillatorRef.current = osc;
+          
+          // Ramp volume
           gain.gain.setValueAtTime(0, ctx.currentTime);
-          gain.gain.linearRampToValueAtTime(1.0, ctx.currentTime + 0.1);
+          gain.gain.linearRampToValueAtTime(1.0, ctx.currentTime + 0.05);
+          gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.6);
 
       } catch (e) {
           console.error("Audio Context Error:", e);
@@ -91,10 +81,7 @@ export const UserBroadcast: React.FC = () => {
           } catch(e) {}
           oscillatorRef.current = null;
       }
-      if (audioContextRef.current) {
-          // Don't close context, just suspend to keep it ready
-          audioContextRef.current.suspend(); 
-      }
+      // Do NOT close/suspend audio context here. Keeping it open helps iOS stay awake.
   };
   
   // --- ALARM TRIGGER ---
@@ -107,19 +94,21 @@ export const UserBroadcast: React.FC = () => {
 
     // 2. Vibrate
     if (navigator.vibrate) {
-        navigator.vibrate([1000, 200, 1000, 200, 2000]);
+        navigator.vibrate([600]); 
     }
 
-    // 3. Stop after 30 seconds
-    setTimeout(() => stopAlarm(), 30000);
+    // 3. STOP AFTER 0.6 Seconds (The "Sweet Spot")
+    // Short, aggressive bursts are more reliable in background than long files
+    setTimeout(() => {
+        setIsAlarmActive(false);
+        stopDigitalSiren();
+        if (navigator.vibrate) navigator.vibrate(0);
+        
+        // Clear event immediately so we don't loop infinitely on the same second
+        nextEventRef.current = null;
+        checkData(); // Refresh data to clear the alert state if needed
+    }, 600);
   }, []);
-
-  const stopAlarm = () => {
-      setIsAlarmActive(false);
-      stopDigitalSiren();
-      if (navigator.vibrate) navigator.vibrate(0);
-      checkData();
-  };
 
   // --- DATA CHECK ---
   const checkData = async () => {
@@ -127,24 +116,26 @@ export const UserBroadcast: React.FC = () => {
       setAlerts(currentAlerts);
 
       const next = await getNextEvent();
-      setNextEvent(next);
       nextEventRef.current = next;
   };
 
-  // --- THE TICKER (Runs every 1s) ---
-  const tick = () => {
+  // --- THE TICKER (Triggered by Web Worker) ---
+  const handleTick = () => {
       const now = Date.now();
       setCurrentTime(now); 
 
+      // Data Polling (Every 2 seconds)
+      if (now - lastDataCheckRef.current > 2000) {
+          lastDataCheckRef.current = now;
+          checkData();
+      }
+
       const target = nextEventRef.current;
       if (target) {
-          // Check if we hit the target time (within 1 min window)
+          // Trigger window: 60 seconds
           if (now >= target.time && now < target.time + 60000) {
               if (!isAlarmActive) {
                   triggerAlarm();
-                  // Prevent immediate re-trigger
-                  nextEventRef.current = null;
-                  setNextEvent(null); 
               }
           }
       }
@@ -154,32 +145,32 @@ export const UserBroadcast: React.FC = () => {
   const handleActivate = async () => {
       setAudioEnabled(true);
       
-      // 1. Initialize Audio Context on user click (Required by browsers)
+      // 1. Initialize Audio Context (User Gesture Required)
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+          audioContextRef.current = new AudioContextClass();
       }
-      // Resume immediately to unlock audio subsystem
-      if (audioContextRef.current.state === 'suspended') {
-          await audioContextRef.current.resume();
-      }
+      await audioContextRef.current.resume();
 
-      // 2. Start Silent Loop (Keeps tab throttled less)
+      // 2. Start Silent Loop (Keep Awake Hack)
       if (silentAudioRef.current) {
           silentAudioRef.current.play().catch(e => console.error("Silent audio failed", e));
       }
 
-      // 3. Request Wake Lock (Keep screen on)
+      // 3. Request Wake Lock
       if ('wakeLock' in navigator) {
           try { await (navigator as any).wakeLock.request('screen'); } catch(e) {}
       }
       
-      // 4. Start Interval
-      if (loopIdRef.current) clearInterval(loopIdRef.current);
-      loopIdRef.current = setInterval(() => {
-          tick();
-          // Check data sync every 5 seconds
-          if (Date.now() % 5000 < 1000) checkData();
-      }, 1000);
+      // 4. Start Web Worker (Background Timer)
+      // This runs in a separate thread, so Chrome/iOS throttles it LESS than setInterval
+      if (!workerRef.current) {
+          workerRef.current = new Worker(new URL('/polling-worker.js', import.meta.url));
+          workerRef.current.onmessage = (e) => {
+              if (e.data === 'tick') handleTick();
+          };
+          workerRef.current.postMessage('start');
+      }
 
       // 5. Initial Load
       checkData();
@@ -188,22 +179,28 @@ export const UserBroadcast: React.FC = () => {
 
   const handleStop = () => {
       setAudioEnabled(false);
-      stopAlarm();
+      setIsAlarmActive(false);
+      stopDigitalSiren();
+      
       if (silentAudioRef.current) silentAudioRef.current.pause();
-      if (loopIdRef.current) clearInterval(loopIdRef.current);
+      
+      if (workerRef.current) {
+          workerRef.current.postMessage('stop');
+          workerRef.current.terminate();
+          workerRef.current = null;
+      }
   };
 
   // Setup on mount
   useEffect(() => {
       checkData();
       return () => {
-          if (loopIdRef.current) clearInterval(loopIdRef.current);
-          stopDigitalSiren();
+          handleStop();
       };
   }, []);
 
   return (
-    <div className={`min-h-screen text-white flex flex-col transition-colors duration-500 ${isAlarmActive ? 'alarm-flash' : 'bg-slate-900'}`}>
+    <div className={`min-h-screen text-white flex flex-col transition-colors duration-200 ${isAlarmActive ? 'bg-red-700' : 'bg-slate-900'}`}>
       
       {/* 1. SILENT AUDIO (Web Engine) */}
       <audio 
@@ -225,7 +222,7 @@ export const UserBroadcast: React.FC = () => {
              <div>
                  <h1 className="font-bold tracking-wider text-red-500">SENTINEL</h1>
                  <div className="flex items-center gap-2 text-[10px]">
-                     {audioEnabled ? <span className="text-green-400 font-bold">● ACTIVE</span> : <span className="text-slate-500">● PAUSED</span>}
+                     {audioEnabled ? <span className="text-green-400 font-bold">● MONITOR ACTIVE</span> : <span className="text-slate-500">● PAUSED</span>}
                  </div>
              </div>
           </div>
@@ -251,7 +248,7 @@ export const UserBroadcast: React.FC = () => {
                   <i className="fas fa-exclamation-triangle text-3xl text-yellow-500 mb-2"></i>
                   <h3 className="text-yellow-200 font-bold text-lg">System Paused</h3>
                   <p className="text-sm text-yellow-100/80 mt-2">
-                      Tap <b>ACTIVATE</b> to start the monitor.
+                      Tap <b>ACTIVATE</b>. Do not close the app.
                   </p>
               </div>
           ) : (
@@ -261,31 +258,16 @@ export const UserBroadcast: React.FC = () => {
                    <div className="text-center">
                        <p className="text-xs text-green-400 uppercase tracking-widest font-bold mb-1">
                            <i className="fas fa-wave-square mr-2"></i> 
-                           Web Monitor Running
+                           Monitoring Background
                        </p>
                        <p className="text-4xl font-oswald text-white tabular-nums">
                            {new Date(currentTime).toLocaleTimeString([], { hour12: false })}
                        </p>
                        <p className="text-[10px] text-slate-500 mt-2">
-                           Do not close this tab. Screen can be turned off if supported.
+                           If phone is locked, the <b>Notification</b> will ring.
                        </p>
                    </div>
               </div>
-          )}
-          
-          {nextEvent && audioEnabled && (
-             <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 p-6 rounded-lg mb-8 text-center shadow-xl">
-                 <div className="inline-block bg-blue-900/50 text-blue-300 px-3 py-1 rounded-full text-xs font-bold mb-4">
-                     UPCOMING ALARM
-                 </div>
-                 <div className="text-5xl font-oswald text-white mb-2">
-                     {new Date(nextEvent.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                 </div>
-                 <p className="text-lg text-blue-200">{nextEvent.content}</p>
-                 <div className="mt-4 text-xs text-slate-500">
-                     Scheduled for: {new Date(nextEvent.time).toDateString()}
-                 </div>
-             </div>
           )}
 
           <h2 className="text-slate-500 uppercase text-xs font-bold mb-4 border-b border-slate-800 pb-2">Active Alerts</h2>

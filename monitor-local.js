@@ -1,13 +1,10 @@
 
 /**
- * SENTINEL MONITOR (CLOUD READY)
+ * SENTINEL MONITOR (PURE PWA BACKEND)
  * 
  * 1. Checks for new alerts in Realtime DB.
- * 2. Sends "App Killed" Push Notifications.
- * 3. Sends Heartbeat to Admin Dashboard.
- * 4. Checks Recurring Rules every minute.
- * 5. Checks Scheduled One-Time Alerts.
- * 6. Hosts a HTTP Health Check for Uptime Monitors.
+ * 2. Sends "CRITICAL" Push Notifications (Bypasses Silent Mode where possible).
+ * 3. Keeps the system alive.
  */
 
 import { createRequire } from "module";
@@ -19,75 +16,37 @@ const fs = require("fs");
 
 // --- CONFIGURATION ---
 const MANUAL_DB_URL = process.env.DB_URL || "https://japs-parivar-siren-default-rtdb.firebaseio.com"; 
-// Allow overriding the click-through URL via Environment Variable (e.g. for Vercel)
 const SITE_URL = process.env.SITE_URL || "https://japs-parivar-siren.web.app";
 
 console.log("\n========================================");
-console.log("   🛡️  SENTINEL MONITOR INITIALIZING");
+console.log("   🛡️  SENTINEL PWA MONITOR");
 console.log("========================================");
 
-// --- 1. SETUP CREDENTIALS (FILE OR ENV) ---
+// --- 1. SETUP CREDENTIALS ---
 let serviceAccount;
 const keyFileName = "service-account.json";
-
-// A. Try loading from Environment Variable (Best for Render/Cloud)
 const envCreds = process.env.FIREBASE_SERVICE_ACCOUNT;
+
 if (envCreds) {
     try {
-        console.log("🔐 Found FIREBASE_SERVICE_ACCOUNT env var. Parsing...");
-        // Handle potential formatting issues (trim whitespace)
         serviceAccount = JSON.parse(envCreds.trim());
-        console.log("✅ Credentials successfully parsed from Environment.");
-    } catch (e) {
-        console.error("❌ Failed to parse FIREBASE_SERVICE_ACCOUNT env var.");
-        console.error("Error details:", e.message);
-        console.error("First 20 chars of your key:", envCreds.substring(0, 20) + "...");
-        console.error("HINT: Ensure you copied the entire JSON object { ... } and didn't add extra quotes.");
-    }
-} else {
-    console.log("⚠️ No FIREBASE_SERVICE_ACCOUNT env var found. Checking local file...");
+    } catch (e) { console.error("Env Parse Error"); }
+} else if (fs.existsSync(`./${keyFileName}`)) {
+    serviceAccount = require(`./${keyFileName}`);
 }
 
-// B. Try loading from Local File (Best for PC)
 if (!serviceAccount) {
-    if (fs.existsSync(`./${keyFileName}`)) {
-        console.log(`✅ Loading credentials from local file: ${keyFileName}`);
-        serviceAccount = require(`./${keyFileName}`);
-    } else {
-        console.log(`ℹ️ Local file ./${keyFileName} not found.`);
-    }
-}
-
-// C. FAIL IF NOTHING FOUND
-if (!serviceAccount) {
-    console.error("\n❌ CRITICAL STARTUP ERROR: No Credentials Available");
-    console.error("---------------------------------------------------");
-    console.error("The Monitor cannot start because it has no access to Firebase.");
-    console.error("\nIF YOU ARE ON RENDER.COM:");
-    console.error("1. Go to your Dashboard -> Environment Variables.");
-    console.error("2. Ensure Key is EXACTLY: FIREBASE_SERVICE_ACCOUNT");
-    console.error("3. Ensure Value is the ENTIRE content of service-account.json (starts with { ends with })");
-    console.error("4. IMPORTANT: If you just pushed code, wait for the new build.");
-    console.error("\nIF YOU ARE ON LOCAL PC:");
-    console.error(`1. Put '${keyFileName}' in this folder.`);
+    console.error("❌ ERROR: No service-account.json found.");
     process.exit(1);
 }
-
-// Determine Database URL
-const dbUrl = MANUAL_DB_URL;
-
-console.log(`✅ Project ID:  ${serviceAccount.project_id}`);
-console.log(`🔗 Database:    ${dbUrl}`);
-console.log(`🔗 App Link:    ${SITE_URL}`);
-console.log("----------------------------------------");
 
 try {
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
-      databaseURL: dbUrl
+      databaseURL: MANUAL_DB_URL
     });
 } catch (e) {
-    console.error("❌ Firebase Auth Error:", e.message);
+    console.error("Firebase Init Error:", e.message);
     process.exit(1);
 }
 
@@ -97,46 +56,26 @@ const alertsRef = db.ref("/sentinel_alerts_v1");
 const recurringRef = db.ref("/sentinel_recurring_v1");
 const statusRef = db.ref("/sentinel_status/monitor");
 
-// Track IDs we have already pushed to avoid duplicate spamming
 const processedIds = new Set();
+let nextPendingTime = null;
 
-// --- 2. HTTP SERVER (REQUIRED FOR CLOUD HOSTING) ---
-// Cloud providers (Render, Heroku) check PORT to see if app is alive.
+// --- 2. HTTP SERVER ---
 const PORT = process.env.PORT || 3000;
-const server = http.createServer((req, res) => {
+http.createServer((req, res) => {
     res.writeHead(200);
-    res.end(`Sentinel Monitor is Running... Status: ONLINE. Time: ${new Date().toISOString()}`);
-});
+    res.end("Sentinel Monitor Active");
+}).listen(PORT, () => console.log(`🌐 Monitor listening on ${PORT}`));
 
-server.listen(PORT, () => {
-    console.log(`\n🌐 HTTP Health Server listening on port ${PORT}`);
-});
-
-// --- 3. CONNECTION CHECK ---
-db.ref(".info/connected").on("value", (snap) => {
-    if (snap.val() === true) {
-        console.log("🟢 Database Connected! Monitoring timeline...");
-    } else {
-        console.log("🟡 Connecting to Database...");
-    }
-});
-
-// --- 4. HEARTBEAT SYSTEM ---
+// --- 3. STATUS UPDATE ---
 function startHeartbeat() {
-    const updateStatus = () => {
-        statusRef.update({
-            online: true,
-            last_seen: Date.now()
-        }).catch(() => {});
-    };
-
-    updateStatus();
-    setInterval(updateStatus, 2000);
+    const update = () => statusRef.update({ online: true, last_seen: Date.now() }).catch(()=>{});
+    update();
+    setInterval(update, 5000);
 }
 
-// --- 5. MASTER SCHEDULER ---
+// --- 4. MASTER SCHEDULER ---
 function startMasterScheduler() {
-    console.log("⏰ Scheduler Active: Checking for alerts every 1 second...");
+    console.log("⏰ Scheduler Active");
 
     setInterval(async () => {
         const now = Date.now();
@@ -144,78 +83,66 @@ function startMasterScheduler() {
         const currentTimeStr = `${dateObj.getHours().toString().padStart(2, '0')}:${dateObj.getMinutes().toString().padStart(2, '0')}`;
         const currentSeconds = dateObj.getSeconds();
 
-        // A. CHECK STANDARD ALERTS
+        // A. CHECK ONE-TIME ALERTS
         try {
-            const snapshot = await alertsRef.once('value');
-            const val = snapshot.val();
-            
+            const snap = await alertsRef.once('value');
+            const val = snap.val();
             if (val) {
-                const allAlerts = Array.isArray(val) ? val : Object.values(val);
-                for (const alert of allAlerts) {
+                const alerts = Array.isArray(val) ? val : Object.values(val);
+                for (const alert of alerts) {
                     const timeDiff = now - alert.scheduledTime;
-                    
-                    // 🛡️ UPDATED LOGIC: 
-                    // Previously: timeDiff < 60000 (1 min window)
-                    // New: timeDiff < 900000 (15 min window)
-                    // This handles cases where the Render server sleeps and wakes up 5 mins late.
+                    // Check if due within last 15 mins
                     if (timeDiff >= 0 && timeDiff < 900000) {
                         if (!processedIds.has(alert.id)) {
-                            console.log(`\n🔔 SCHEDULED ALERT DUE: ${alert.content} (Lag: ${Math.floor(timeDiff/1000)}s)`);
+                            console.log(`🔔 ALERT: ${alert.content}`);
                             processedIds.add(alert.id);
                             await sendNotifications(alert);
                         }
                     }
                 }
             }
-        } catch (e) {
-            console.error("Read Error:", e.message);
-        }
+        } catch (e) {}
 
-        // B. CHECK RECURRING ALERTS
-        if (currentSeconds < 10) { // Check for first 10 seconds of minute
+        // B. CHECK RECURRING ALERTS (First 10s of minute)
+        if (currentSeconds < 10) { 
              try {
                 const snap = await recurringRef.once('value');
                 const val = snap.val();
                 const rules = val ? (Array.isArray(val) ? val : Object.values(val)) : [];
-
                 rules.forEach(async (rule) => {
-                    const uniqueId = `recurring-${rule.id}-${dateObj.getDate()}-${currentTimeStr}`;
+                    const uid = `recurring-${rule.id}-${dateObj.getDate()}-${currentTimeStr}`;
                     if (rule.isActive && rule.scheduledTime === currentTimeStr) {
-                         if (!processedIds.has(uniqueId)) {
-                            console.log(`\n🔄 RECURRING DUE: ${rule.content}`);
-                            processedIds.add(uniqueId);
+                         if (!processedIds.has(uid)) {
+                            console.log(`🔄 RECURRING: ${rule.content}`);
+                            processedIds.add(uid);
                             await sendNotifications({
-                                id: uniqueId,
+                                id: uid,
                                 severity: rule.severity,
                                 content: `[DAILY] ${rule.content}`
                             });
                          }
                     }
                 });
-             } catch (e) {
-                 console.error("Recurring Read Error:", e.message);
-             }
+             } catch (e) {}
         }
-    }, 2000); // Check every 2 seconds to save CPU
+    }, 2000);
 }
 
-// --- 6. NOTIFICATION SENDER ---
+// --- 5. NOTIFICATION SENDER (CRITICAL PRIORITY) ---
 async function sendNotifications(alertData) {
-    const tokensSnapshot = await db.ref("fcm_tokens").once("value");
-    if (!tokensSnapshot.exists()) return;
-
+    const snap = await db.ref("fcm_tokens").once("value");
+    if (!snap.exists()) return;
+    
     const tokens = [];
-    tokensSnapshot.forEach(child => {
-        const t = child.val().token;
-        if (t) tokens.push(t);
-    });
-
+    snap.forEach(c => c.val().token && tokens.push(c.val().token));
     if (tokens.length === 0) return;
 
     const linkUrl = `${SITE_URL}/?emergency=true`;
 
-    // Data-Only Payload (Forces Service Worker execution)
+    // 🚨 PAYLOAD CONSTRUCTION 🚨
+    // This is tuned to wake up locked devices.
     const payload = {
+        // Data Payload (For Service Worker execution)
         data: {
             title: `🚨 ${alertData.severity} ALERT`,
             body: `${alertData.content}`,
@@ -225,24 +152,45 @@ async function sendNotifications(alertData) {
             timestamp: Date.now().toString(),
             url: linkUrl
         },
-        android: { priority: "high", ttl: 0 },
-        webpush: { headers: { Urgency: "high" }, fcm_options: { link: linkUrl } }
+        // Android Specifics
+        android: {
+            priority: "high", // Wakes device from Doze
+            ttl: 0, // Deliver immediately
+            notification: {
+                priority: "max", // Heads-up display
+                channelId: "sentinel_channel", // Must match channel created in SW if applicable
+                defaultSound: true,
+                visibility: "public",
+                notificationCount: 1,
+                clickAction: linkUrl
+            }
+        },
+        // Web Push (Standard)
+        webpush: {
+            headers: {
+                Urgency: "high" // RFC 8030 header for battery optimization bypass
+            },
+            fcm_options: {
+                link: linkUrl
+            },
+            notification: {
+                requireInteraction: true,
+                renotify: true,
+                tag: "sentinel-alert"
+            }
+        }
     };
 
     try {
         const response = await messaging.sendEachForMulticast({ tokens: tokens, ...payload });
         console.log(`🚀 Sent to ${response.successCount} devices.`);
     } catch (e) {
-        console.error("🔥 Error sending:", e);
+        console.error("Error sending:", e);
     }
 }
 
-// --- 7. AUTO MAINTENANCE ---
-// Restart every 24 hours to prevent memory leaks on free hosting
-setInterval(() => {
-    console.log("♻️  Daily Maintenance: Restarting process...");
-    process.exit(0); 
-}, 86400000);
+// Restart periodically to prevent memory leaks
+setInterval(() => process.exit(0), 86400000);
 
 startHeartbeat();
 startMasterScheduler();
