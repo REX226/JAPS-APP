@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertMessage } from '../types';
@@ -8,9 +7,8 @@ import { Button } from '../components/Button';
 import { isCloudEnabled } from '../services/config';
 import { initializePushNotifications } from '../services/firebase';
 
-// 1. SILENT MP3 (Base64) - Plays continuously to keep the browser tab awake
-// This is critical for iOS/Android background execution
-const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV6urq6urq6urq6urq6urq6urq6urq6urq6v////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAASAAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA";
+// 1. SILENT WAV (Base64) - valid PCM format universally supported by iOS/Android
+const SILENT_AUDIO = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
 export const UserBroadcast: React.FC = () => {
   const navigate = useNavigate();
@@ -24,7 +22,7 @@ export const UserBroadcast: React.FC = () => {
   // Refs for Engine
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
   const nextEventRef = useRef<{ time: number, content: string } | null>(null);
-  const workerRef = useRef<Worker | null>(null); // Use Web Worker for background timing
+  const workerRef = useRef<Worker | null>(null);
   const lastDataCheckRef = useRef<number>(0);
 
   // Digital Siren Refs
@@ -41,19 +39,23 @@ export const UserBroadcast: React.FC = () => {
 
           const ctx = audioContextRef.current;
           
-          // Force resume (Fix for iOS locked screen)
+          // Force resume (critical for locked iOS)
           if (ctx.state === 'suspended') {
-              ctx.resume();
+              ctx.resume().catch(e => console.error("Ctx resume failed", e));
           }
 
           // Create Oscillator
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
 
-          osc.type = 'square'; // 'Square' wave cuts through noise better than sawtooth
-          osc.frequency.setValueAtTime(800, ctx.currentTime);
-          osc.frequency.linearRampToValueAtTime(1200, ctx.currentTime + 0.1);
-          osc.frequency.linearRampToValueAtTime(800, ctx.currentTime + 0.6);
+          // 0.5s CHIRP CONFIGURATION
+          // Square wave cuts through background noise best
+          osc.type = 'square'; 
+          
+          // Frequency sweep: 800Hz -> 1500Hz (Rapid rise)
+          const now = ctx.currentTime;
+          osc.frequency.setValueAtTime(800, now);
+          osc.frequency.linearRampToValueAtTime(1500, now + 0.5);
 
           osc.connect(gain);
           gain.connect(ctx.destination);
@@ -63,10 +65,9 @@ export const UserBroadcast: React.FC = () => {
           // Save ref
           oscillatorRef.current = osc;
           
-          // Ramp volume
-          gain.gain.setValueAtTime(0, ctx.currentTime);
-          gain.gain.linearRampToValueAtTime(1.0, ctx.currentTime + 0.05);
-          gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.6);
+          // Volume envelope (Fade out at end to prevent clicking)
+          gain.gain.setValueAtTime(0.8, now);
+          gain.gain.linearRampToValueAtTime(0, now + 0.5);
 
       } catch (e) {
           console.error("Audio Context Error:", e);
@@ -81,7 +82,6 @@ export const UserBroadcast: React.FC = () => {
           } catch(e) {}
           oscillatorRef.current = null;
       }
-      // Do NOT close/suspend audio context here. Keeping it open helps iOS stay awake.
   };
   
   // --- ALARM TRIGGER ---
@@ -92,22 +92,21 @@ export const UserBroadcast: React.FC = () => {
     // 1. Play Digital Siren
     startDigitalSiren();
 
-    // 2. Vibrate
+    // 2. Vibrate (Short, aggressive buzz)
     if (navigator.vibrate) {
-        navigator.vibrate([600]); 
+        navigator.vibrate([500]); 
     }
 
-    // 3. STOP AFTER 0.6 Seconds (The "Sweet Spot")
-    // Short, aggressive bursts are more reliable in background than long files
+    // 3. STOP AFTER 0.5 Seconds (The "Sweet Spot")
     setTimeout(() => {
         setIsAlarmActive(false);
         stopDigitalSiren();
         if (navigator.vibrate) navigator.vibrate(0);
         
-        // Clear event immediately so we don't loop infinitely on the same second
+        // Clear event immediately
         nextEventRef.current = null;
-        checkData(); // Refresh data to clear the alert state if needed
-    }, 600);
+        checkData(); 
+    }, 500);
   }, []);
 
   // --- DATA CHECK ---
@@ -119,7 +118,7 @@ export const UserBroadcast: React.FC = () => {
       nextEventRef.current = next;
   };
 
-  // --- THE TICKER (Triggered by Web Worker) ---
+  // --- THE TICKER ---
   const handleTick = () => {
       const now = Date.now();
       setCurrentTime(now); 
@@ -145,36 +144,44 @@ export const UserBroadcast: React.FC = () => {
   const handleActivate = async () => {
       setAudioEnabled(true);
       
-      // 1. Initialize Audio Context (User Gesture Required)
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!audioContextRef.current) {
-          audioContextRef.current = new AudioContextClass();
-      }
-      await audioContextRef.current.resume();
+      try {
+          // 1. Initialize Audio Context (User Gesture Required)
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          if (!audioContextRef.current) {
+              audioContextRef.current = new AudioContextClass();
+          }
+          await audioContextRef.current.resume();
 
-      // 2. Start Silent Loop (Keep Awake Hack)
-      if (silentAudioRef.current) {
-          silentAudioRef.current.play().catch(e => console.error("Silent audio failed", e));
-      }
+          // 2. Start Silent Loop (Fixes "Element has no supported sources")
+          if (silentAudioRef.current) {
+              // Reset source to ensure it picks up the WAV
+              silentAudioRef.current.src = SILENT_AUDIO;
+              silentAudioRef.current.load();
+              await silentAudioRef.current.play();
+          }
 
-      // 3. Request Wake Lock
-      if ('wakeLock' in navigator) {
-          try { await (navigator as any).wakeLock.request('screen'); } catch(e) {}
-      }
-      
-      // 4. Start Web Worker (Background Timer)
-      // This runs in a separate thread, so Chrome/iOS throttles it LESS than setInterval
-      if (!workerRef.current) {
-          workerRef.current = new Worker(new URL('/polling-worker.js', import.meta.url));
-          workerRef.current.onmessage = (e) => {
-              if (e.data === 'tick') handleTick();
-          };
-          workerRef.current.postMessage('start');
-      }
+          // 3. Request Wake Lock
+          if ('wakeLock' in navigator) {
+              await (navigator as any).wakeLock.request('screen');
+          }
 
-      // 5. Initial Load
-      checkData();
-      if (isCloudEnabled()) initializePushNotifications();
+          // 4. Start Web Worker
+          if (!workerRef.current) {
+              workerRef.current = new Worker(new URL('/polling-worker.js', import.meta.url));
+              workerRef.current.onmessage = (e) => {
+                  if (e.data === 'tick') handleTick();
+              };
+              workerRef.current.postMessage('start');
+          }
+
+          // 5. Initial Load
+          checkData();
+          if (isCloudEnabled()) initializePushNotifications();
+
+      } catch (e) {
+          console.error("Activation Error:", e);
+          alert("Could not activate audio. Please interact with the page and try again.");
+      }
   };
 
   const handleStop = () => {
@@ -182,7 +189,10 @@ export const UserBroadcast: React.FC = () => {
       setIsAlarmActive(false);
       stopDigitalSiren();
       
-      if (silentAudioRef.current) silentAudioRef.current.pause();
+      if (silentAudioRef.current) {
+          silentAudioRef.current.pause();
+          silentAudioRef.current.currentTime = 0;
+      }
       
       if (workerRef.current) {
           workerRef.current.postMessage('stop');
@@ -191,7 +201,6 @@ export const UserBroadcast: React.FC = () => {
       }
   };
 
-  // Setup on mount
   useEffect(() => {
       checkData();
       return () => {
@@ -202,10 +211,9 @@ export const UserBroadcast: React.FC = () => {
   return (
     <div className={`min-h-screen text-white flex flex-col transition-colors duration-200 ${isAlarmActive ? 'bg-red-700' : 'bg-slate-900'}`}>
       
-      {/* 1. SILENT AUDIO (Web Engine) */}
+      {/* 1. SILENT AUDIO (Hidden) */}
       <audio 
         ref={silentAudioRef} 
-        src={SILENT_MP3} 
         loop 
         playsInline 
         autoPlay={false} 

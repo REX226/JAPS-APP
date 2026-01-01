@@ -1,4 +1,3 @@
-
 /**
  * SENTINEL MONITOR (PURE PWA BACKEND)
  * 
@@ -140,7 +139,6 @@ async function sendNotifications(alertData) {
     const linkUrl = `${SITE_URL}/?emergency=true`;
 
     // 🚨 PAYLOAD CONSTRUCTION 🚨
-    // This is tuned to wake up locked devices.
     const payload = {
         // Data Payload (For Service Worker execution)
         data: {
@@ -158,7 +156,7 @@ async function sendNotifications(alertData) {
             ttl: 0, // Deliver immediately
             notification: {
                 priority: "max", // Heads-up display
-                channelId: "sentinel_channel", // Must match channel created in SW if applicable
+                channelId: "sentinel_channel",
                 defaultSound: true,
                 visibility: "public",
                 notificationCount: 1,
@@ -168,7 +166,7 @@ async function sendNotifications(alertData) {
         // Web Push (Standard)
         webpush: {
             headers: {
-                Urgency: "high" // RFC 8030 header for battery optimization bypass
+                Urgency: "high" // RFC 8030 header
             },
             fcm_options: {
                 link: linkUrl
