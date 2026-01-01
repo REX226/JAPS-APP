@@ -16,7 +16,6 @@ export const UserBroadcast: React.FC = () => {
   
   // UI State
   const [alerts, setAlerts] = useState<AlertMessage[]>([]);
-  // Removed nextEvent state as requested
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
@@ -25,14 +24,17 @@ export const UserBroadcast: React.FC = () => {
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
   const nextEventRef = useRef<{ time: number, content: string } | null>(null);
   const loopIdRef = useRef<any>(null);
+  
+  // 1. PREVENT LOOPING: Keep track of alerts we have already played
+  // We use a string key: "timestamp-content" to uniquely identify an event instance
+  const processedKeysRef = useRef<Set<string>>(new Set());
 
   // Digital Siren Refs
   const audioContextRef = useRef<AudioContext | null>(null);
   const oscillatorRef = useRef<OscillatorNode | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
   
   // --- DIGITAL SIREN (Web Audio API) ---
-  const startDigitalSiren = () => {
+  const playOneSecondSiren = () => {
       try {
           const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
           if (!audioContextRef.current) {
@@ -48,16 +50,17 @@ export const UserBroadcast: React.FC = () => {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
 
+          // SIREN SOUND: Sawtooth wave (Classic Siren Texture)
           osc.type = 'sawtooth'; 
-          osc.frequency.value = 600; 
+          osc.frequency.value = 600; // Base frequency
 
-          // LFO to modulate frequency (Make it wail)
+          // LFO (The "Wail") - Faster wail (4Hz) to fit in 1 second
           const lfo = ctx.createOscillator();
           lfo.type = 'sine';
-          lfo.frequency.value = 2; 
+          lfo.frequency.value = 4; 
           
           const lfoGain = ctx.createGain();
-          lfoGain.gain.value = 400; 
+          lfoGain.gain.value = 200; // Modulation depth
 
           lfo.connect(lfoGain);
           lfoGain.connect(osc.frequency);
@@ -65,15 +68,20 @@ export const UserBroadcast: React.FC = () => {
           osc.connect(gain);
           gain.connect(ctx.destination);
 
-          osc.start();
-          lfo.start();
+          // ENVELOPE: Ramp up, sustain, then fade out smoothly
+          const now = ctx.currentTime;
+          gain.gain.setValueAtTime(0, now);
+          gain.gain.linearRampToValueAtTime(0.5, now + 0.1); // Volume 50% (Siren is loud)
+          gain.gain.setValueAtTime(0.5, now + 0.8);
+          gain.gain.linearRampToValueAtTime(0.001, now + 1.0); // Fade out to avoid click
+
+          osc.start(now);
+          lfo.start(now);
+          
+          osc.stop(now + 1.0);
+          lfo.stop(now + 1.0);
 
           oscillatorRef.current = osc;
-          gainNodeRef.current = gain;
-          
-          // Ramp volume up
-          gain.gain.setValueAtTime(0, ctx.currentTime);
-          gain.gain.linearRampToValueAtTime(1.0, ctx.currentTime + 0.1);
 
       } catch (e) {
           console.error("Audio Context Error:", e);
@@ -88,33 +96,33 @@ export const UserBroadcast: React.FC = () => {
           } catch(e) {}
           oscillatorRef.current = null;
       }
-      if (audioContextRef.current) {
-          audioContextRef.current.suspend(); 
-      }
+      // We do NOT suspend context here, keeping it hot for the silent loop
   };
   
   // --- ALARM TRIGGER ---
-  const triggerAlarm = useCallback(() => {
-    console.log("🚨 ALARM TRIGGERED");
+  const triggerAlarm = useCallback((eventKey: string) => {
+    console.log("🚨 ALARM TRIGGERED for:", eventKey);
+    
+    // Mark as processed IMMEDIATELY so it doesn't loop
+    processedKeysRef.current.add(eventKey);
+    
     setIsAlarmActive(true);
 
-    startDigitalSiren();
+    // 1. Play Siren (1 Sec)
+    playOneSecondSiren();
 
+    // 2. Vibrate (1 second)
     if (navigator.vibrate) {
-        // Vibrate for exactly 1 second to match the audio
         navigator.vibrate([1000]);
     }
 
-    // 3. Stop automatically after 1 second
-    setTimeout(() => stopAlarm(), 1000);
+    // 3. UI Auto-Stop after 1 second
+    setTimeout(() => {
+        setIsAlarmActive(false);
+        stopDigitalSiren(); 
+        checkData(); // Refresh list
+    }, 1000);
   }, []);
-
-  const stopAlarm = () => {
-      setIsAlarmActive(false);
-      stopDigitalSiren();
-      if (navigator.vibrate) navigator.vibrate(0);
-      checkData();
-  };
 
   // --- DATA CHECK ---
   const checkData = async () => {
@@ -122,7 +130,6 @@ export const UserBroadcast: React.FC = () => {
       setAlerts(currentAlerts);
 
       const next = await getNextEvent();
-      // Removed setNextEvent(next);
       nextEventRef.current = next;
   };
 
@@ -133,10 +140,15 @@ export const UserBroadcast: React.FC = () => {
 
       const target = nextEventRef.current;
       if (target) {
+          // Check if inside the 60-second window
           if (now >= target.time && now < target.time + 60000) {
-              if (!isAlarmActive) {
-                  triggerAlarm();
-                  nextEventRef.current = null;
+              
+              // CREATE UNIQUE KEY
+              const eventKey = `${target.time}-${target.content.substring(0, 10)}`;
+
+              // CHECK IF ALREADY PLAYED
+              if (!processedKeysRef.current.has(eventKey) && !isAlarmActive) {
+                  triggerAlarm(eventKey);
               }
           }
       }
@@ -156,12 +168,10 @@ export const UserBroadcast: React.FC = () => {
               await audioContextRef.current.resume();
           }
 
-          // 2. Start Silent Loop (Fixes "No Supported Sources")
+          // 2. Start Silent Loop (Keep Awake)
           if (silentAudioRef.current) {
-              // Explicitly set source and load
               silentAudioRef.current.src = SILENT_AUDIO;
               silentAudioRef.current.load();
-              // Play and catch errors gracefully
               await silentAudioRef.current.play().catch(e => console.error("Silent play failed (non-fatal):", e));
           }
 
@@ -189,7 +199,8 @@ export const UserBroadcast: React.FC = () => {
 
   const handleStop = () => {
       setAudioEnabled(false);
-      stopAlarm();
+      setIsAlarmActive(false);
+      stopDigitalSiren();
       if (silentAudioRef.current) {
           silentAudioRef.current.pause();
           silentAudioRef.current.currentTime = 0;
@@ -213,7 +224,6 @@ export const UserBroadcast: React.FC = () => {
         ref={silentAudioRef} 
         loop 
         playsInline 
-        // Removing explicit 'src' here, setting it in handleActivate
         style={{ display: 'none' }}
       />
       
@@ -274,8 +284,6 @@ export const UserBroadcast: React.FC = () => {
                    </div>
               </div>
           )}
-          
-          {/* Removed UPCOMING ALARM block as requested */}
 
           <h2 className="text-slate-500 uppercase text-xs font-bold mb-4 border-b border-slate-800 pb-2">Active Alerts</h2>
           {alerts.length === 0 ? (
