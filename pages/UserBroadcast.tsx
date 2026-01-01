@@ -5,18 +5,14 @@ import { AlertMessage } from '../types';
 import { getActiveAlerts, getNextEvent } from '../services/storage';
 import { AlertCard } from '../components/AlertCard';
 import { Button } from '../components/Button';
-import { isCloudEnabled, getBackendUrl } from '../services/config';
+import { isCloudEnabled } from '../services/config';
 import { initializePushNotifications } from '../services/firebase';
 
-// 1. SILENT MP3 (Base64) - Plays continuously to keep the app alive
+// 1. SILENT MP3 (Base64) - Plays continuously to keep the browser tab awake
 const SILENT_MP3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV6urq6urq6urq6urq6urq6urq6urq6urq6v////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAASAAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA//OEZAAAAAABIAAAAAAAAAAAASAAK8AAAASAAAAA";
-
-// 2. LOUD SIREN (Path)
-const CUSTOM_SIREN_PATH = "./siren.mp3";
 
 export const UserBroadcast: React.FC = () => {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   
   // UI State
   const [alerts, setAlerts] = useState<AlertMessage[]>([]);
@@ -24,64 +20,109 @@ export const UserBroadcast: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
-  const [isCloud, setIsCloud] = useState(false);
   
   // Refs for Engine
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
-  const alarmAudioRef = useRef<HTMLAudioElement | null>(null);
   const nextEventRef = useRef<{ time: number, content: string } | null>(null);
   const loopIdRef = useRef<any>(null);
+
+  // Digital Siren Refs
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const oscillatorRef = useRef<OscillatorNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  
+  // --- DIGITAL SIREN (Web Audio API) ---
+  // This generates sound via code, no MP3 file needed.
+  const startDigitalSiren = () => {
+      try {
+          if (!audioContextRef.current) {
+              audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+          }
+
+          const ctx = audioContextRef.current;
+          
+          // Resume context if suspended (common in browsers)
+          if (ctx.state === 'suspended') {
+              ctx.resume();
+          }
+
+          // Create Oscillator (The sound generator)
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+
+          osc.type = 'sawtooth'; // Harsh sound
+          osc.frequency.value = 600; // Start freq
+
+          // LFO to modulate frequency (Make it wail up and down)
+          const lfo = ctx.createOscillator();
+          lfo.type = 'sine';
+          lfo.frequency.value = 2; // Speed of wail (2 Hz)
+          
+          const lfoGain = ctx.createGain();
+          lfoGain.gain.value = 400; // Depth of wail (+- 400Hz)
+
+          lfo.connect(lfoGain);
+          lfoGain.connect(osc.frequency);
+          
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+
+          osc.start();
+          lfo.start();
+
+          // Save refs to stop later
+          oscillatorRef.current = osc;
+          gainNodeRef.current = gain;
+          
+          // Ramp volume up
+          gain.gain.setValueAtTime(0, ctx.currentTime);
+          gain.gain.linearRampToValueAtTime(1.0, ctx.currentTime + 0.1);
+
+      } catch (e) {
+          console.error("Audio Context Error:", e);
+      }
+  };
+
+  const stopDigitalSiren = () => {
+      if (oscillatorRef.current) {
+          try {
+              oscillatorRef.current.stop();
+              oscillatorRef.current.disconnect();
+          } catch(e) {}
+          oscillatorRef.current = null;
+      }
+      if (audioContextRef.current) {
+          // Don't close context, just suspend to keep it ready
+          audioContextRef.current.suspend(); 
+      }
+  };
   
   // --- ALARM TRIGGER ---
   const triggerAlarm = useCallback(() => {
     console.log("🚨 ALARM TRIGGERED");
     setIsAlarmActive(true);
 
-    // 1. Play Loud Audio
-    if (alarmAudioRef.current) {
-        alarmAudioRef.current.currentTime = 0;
-        alarmAudioRef.current.volume = 1.0;
-        
-        const playPromise = alarmAudioRef.current.play();
-        if (playPromise !== undefined) {
-            playPromise
-                .then(() => console.log("🔊 Siren playing"))
-                .catch(e => console.error("❌ Siren failed:", e));
-        }
-    }
+    // 1. Play Digital Siren
+    startDigitalSiren();
 
-    // 2. Vibrate (Pattern: Long, Short, Long)
+    // 2. Vibrate
     if (navigator.vibrate) {
         navigator.vibrate([1000, 200, 1000, 200, 2000]);
-        // Keep vibrating every 4 seconds
-        const vibInt = setInterval(() => {
-            if(alarmAudioRef.current && !alarmAudioRef.current.paused) {
-                 navigator.vibrate([1000, 200, 1000, 200, 2000]);
-            } else {
-                clearInterval(vibInt);
-            }
-        }, 4000);
     }
 
-    // 3. Stop after 30 seconds automatically
+    // 3. Stop after 30 seconds
     setTimeout(() => stopAlarm(), 30000);
   }, []);
 
   const stopAlarm = () => {
       setIsAlarmActive(false);
-      if (alarmAudioRef.current) {
-          alarmAudioRef.current.pause();
-          alarmAudioRef.current.currentTime = 0;
-      }
+      stopDigitalSiren();
       if (navigator.vibrate) navigator.vibrate(0);
-      
-      // Refresh data immediately after stopping
       checkData();
   };
 
   // --- DATA CHECK ---
   const checkData = async () => {
-      setIsCloud(isCloudEnabled());
       const currentAlerts = await getActiveAlerts();
       setAlerts(currentAlerts);
 
@@ -91,22 +132,17 @@ export const UserBroadcast: React.FC = () => {
   };
 
   // --- THE TICKER (Runs every 1s) ---
-  // This function is kept alive by the silent audio loop
   const tick = () => {
       const now = Date.now();
-      setCurrentTime(now); // Update UI clock
+      setCurrentTime(now); 
 
       const target = nextEventRef.current;
-
       if (target) {
-          // Check if we reached the time (with 1s precision)
-          // Also check if we are within 60s past the time (in case of slight drift)
+          // Check if we hit the target time (within 1 min window)
           if (now >= target.time && now < target.time + 60000) {
-              
-              // Only trigger if alarm is not already ringing
-              if (alarmAudioRef.current && alarmAudioRef.current.paused) {
+              if (!isAlarmActive) {
                   triggerAlarm();
-                  // Clear the ref so we don't trigger again in the next second
+                  // Prevent immediate re-trigger
                   nextEventRef.current = null;
                   setNextEvent(null); 
               }
@@ -118,40 +154,35 @@ export const UserBroadcast: React.FC = () => {
   const handleActivate = async () => {
       setAudioEnabled(true);
       
-      // 1. Start Silent Loop (The "Keep-Alive" Hack)
+      // 1. Initialize Audio Context on user click (Required by browsers)
+      if (!audioContextRef.current) {
+          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      // Resume immediately to unlock audio subsystem
+      if (audioContextRef.current.state === 'suspended') {
+          await audioContextRef.current.resume();
+      }
+
+      // 2. Start Silent Loop (Keeps tab throttled less)
       if (silentAudioRef.current) {
           silentAudioRef.current.play().catch(e => console.error("Silent audio failed", e));
       }
 
-      // 2. Request Wake Lock (Screen stays bright if app is open)
+      // 3. Request Wake Lock (Keep screen on)
       if ('wakeLock' in navigator) {
           try { await (navigator as any).wakeLock.request('screen'); } catch(e) {}
       }
-
-      // 3. Setup Media Session (Lock Screen Controls)
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.metadata = new MediaMetadata({
-            title: 'Sentinel Active',
-            artist: 'Monitoring...',
-            artwork: [{ src: 'https://cdn-icons-png.flaticon.com/512/564/564619.png', sizes: '512x512', type: 'image/png' }]
-        });
-        navigator.mediaSession.setActionHandler('play', () => { 
-            if(silentAudioRef.current) silentAudioRef.current.play(); 
-        });
-      }
-
-      // 4. Start the Interval Logic
+      
+      // 4. Start Interval
       if (loopIdRef.current) clearInterval(loopIdRef.current);
       loopIdRef.current = setInterval(() => {
           tick();
-          // Periodically refresh data (every 5s) to get new alerts from admin
+          // Check data sync every 5 seconds
           if (Date.now() % 5000 < 1000) checkData();
       }, 1000);
 
-      // 5. Initial Data Load
+      // 5. Initial Load
       checkData();
-
-      // 6. Request Notification Perms (Backup)
       if (isCloudEnabled()) initializePushNotifications();
   };
 
@@ -167,30 +198,23 @@ export const UserBroadcast: React.FC = () => {
       checkData();
       return () => {
           if (loopIdRef.current) clearInterval(loopIdRef.current);
+          stopDigitalSiren();
       };
   }, []);
 
   return (
     <div className={`min-h-screen text-white flex flex-col transition-colors duration-500 ${isAlarmActive ? 'alarm-flash' : 'bg-slate-900'}`}>
       
-      {/* 1. SILENT AUDIO (The Engine) */}
+      {/* 1. SILENT AUDIO (Web Engine) */}
       <audio 
         ref={silentAudioRef} 
         src={SILENT_MP3} 
         loop 
         playsInline 
-        autoPlay={false} // Must be triggered by user
+        autoPlay={false} 
         style={{ display: 'none' }}
       />
       
-      {/* 2. SIREN AUDIO (The Payload) */}
-      <audio 
-        ref={alarmAudioRef} 
-        src={CUSTOM_SIREN_PATH} 
-        preload="auto"
-        style={{ display: 'none' }}
-      />
-
       {/* HEADER */}
       <header className="bg-slate-800 border-b border-slate-700 p-3 sticky top-0 z-50 shadow-md">
         <div className="max-w-4xl mx-auto flex flex-row justify-between items-center">
@@ -202,7 +226,6 @@ export const UserBroadcast: React.FC = () => {
                  <h1 className="font-bold tracking-wider text-red-500">SENTINEL</h1>
                  <div className="flex items-center gap-2 text-[10px]">
                      {audioEnabled ? <span className="text-green-400 font-bold">● ACTIVE</span> : <span className="text-slate-500">● PAUSED</span>}
-                     {isCloud ? <span className="text-blue-400">● CLOUD</span> : <span className="text-yellow-500">● LOCAL</span>}
                  </div>
              </div>
           </div>
@@ -228,30 +251,28 @@ export const UserBroadcast: React.FC = () => {
                   <i className="fas fa-exclamation-triangle text-3xl text-yellow-500 mb-2"></i>
                   <h3 className="text-yellow-200 font-bold text-lg">System Paused</h3>
                   <p className="text-sm text-yellow-100/80 mt-2">
-                      Tap <b>ACTIVATE</b> to start the background engine.
-                      <br/>The alarm will not ring if this is paused.
+                      Tap <b>ACTIVATE</b> to start the monitor.
                   </p>
               </div>
           ) : (
               <div className="bg-slate-800 border border-slate-700 p-6 rounded-lg mb-6 relative overflow-hidden">
-                   {/* Visual "Heartbeat" to prove JS is running */}
                    <div className="absolute top-0 left-0 w-full h-1 bg-green-500 animate-pulse"></div>
                    
                    <div className="text-center">
                        <p className="text-xs text-green-400 uppercase tracking-widest font-bold mb-1">
-                           <i className="fas fa-satellite-dish mr-2"></i> Engine Running
+                           <i className="fas fa-wave-square mr-2"></i> 
+                           Web Monitor Running
                        </p>
                        <p className="text-4xl font-oswald text-white tabular-nums">
                            {new Date(currentTime).toLocaleTimeString([], { hour12: false })}
                        </p>
                        <p className="text-[10px] text-slate-500 mt-2">
-                           System Time (Updates every second)
+                           Do not close this tab. Screen can be turned off if supported.
                        </p>
                    </div>
               </div>
           )}
           
-          {/* NEXT ALARM CARD */}
           {nextEvent && audioEnabled && (
              <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 p-6 rounded-lg mb-8 text-center shadow-xl">
                  <div className="inline-block bg-blue-900/50 text-blue-300 px-3 py-1 rounded-full text-xs font-bold mb-4">
